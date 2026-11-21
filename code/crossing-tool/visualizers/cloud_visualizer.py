@@ -24,6 +24,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Optional
 
 # Allow imports from the tool root (data/, services/, generators/)
@@ -412,6 +413,7 @@ class _CloudCanvas(QWidget):
 class CloudVisualizer(WindowVisualizer):
     """Word-cloud visualizer — canvas browser, controls in the inspector."""
 
+    @project_operation
     def __init__(self, project_path: str, *, registry=None) -> None:
         self._resource_registry = registry
         # Instance attributes must be set before super().__init__() since the

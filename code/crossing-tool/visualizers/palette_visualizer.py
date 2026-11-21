@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -346,6 +347,15 @@ class _GenerationWorker(QThread):
         self._cancelled = True
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self._target[0]):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.failed.emit(str(error))
+
+    def _run_admitted(self) -> None:
         from services import palette_review
 
         project_path, filename, media_type = self._target
@@ -397,6 +407,15 @@ class _MaskWorker(QThread):
         self._concept = concept
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self._project_path):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.failed.emit(str(error))
+
+    def _run_admitted(self) -> None:
         try:
             from PIL import Image
             from services.silhouette import load_sam_model
@@ -939,6 +958,7 @@ class _PaletteBrowserPage(QWidget):
 class PaletteVisualizerWindow(WindowVisualizer):
     """Generate, review, correct and author two-colour palettes for one movie."""
 
+    @project_operation
     def __init__(self, project_path: str, media_type: str = "movie") -> None:
         self._project_path = project_path
         self._media_type = media_type if media_type in ("movie", "gameplay") else "movie"

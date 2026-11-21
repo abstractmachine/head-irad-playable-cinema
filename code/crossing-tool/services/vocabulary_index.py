@@ -293,7 +293,7 @@ def build_vocabulary_index(
     project_path: str,
     media_type: str = "movie",
     force: bool = False,
-    *, registry=None,
+    *, registry=None, destination=None, write=True,
 ) -> dict:
     """Scan annotation JSON files and build a vocabulary index.
 
@@ -305,6 +305,13 @@ def build_vocabulary_index(
     Skips an up-to-date cache unless *force* is True.
     """
     out_path = _vocab_path(project_path, media_type)
+    if destination is not None:
+        from data.resource_storage import relative_path
+        candidate = Path(project_path).resolve() / relative_path(project_path, destination)
+        if candidate not in (out_path.resolve(), _legacy_vocab_path(project_path, media_type).resolve()):
+            from data.resource_storage import unpublished_destination
+            candidate = unpublished_destination(project_path, destination)
+        out_path = candidate
 
     source_hash = _compute_source_hash(project_path, media_type, registry=registry)
 
@@ -351,9 +358,10 @@ def build_vocabulary_index(
             },
             "fields": {},
         }
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        from data.annotate import atomic_write_text
-        atomic_write_text(out_path, json.dumps(index, indent=2, ensure_ascii=False) + "\n")
+        if write:
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+            from data.annotate import atomic_write_text
+            atomic_write_text(out_path, json.dumps(index, indent=2, ensure_ascii=False) + "\n")
         return index
 
     # For atomic fields we reuse the existing normalization logic.
@@ -464,9 +472,10 @@ def build_vocabulary_index(
         "fields": fields_sorted,
     }
 
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    from data.annotate import atomic_write_text
-    atomic_write_text(out_path, json.dumps(index, indent=2, ensure_ascii=False) + "\n")
+    if write:
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        from data.annotate import atomic_write_text
+        atomic_write_text(out_path, json.dumps(index, indent=2, ensure_ascii=False) + "\n")
 
     return index
 

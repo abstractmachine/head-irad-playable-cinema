@@ -15,6 +15,8 @@ import re
 import sqlite3
 from uuid import uuid4
 
+from tool.project_access import project_operation
+
 
 INDEX_SCHEMA_VERSION = 7
 SOURCES = ("silhouettes", "engravings")
@@ -92,11 +94,15 @@ def _read_revision(project_path: str | Path, source: str, media_type: str) -> st
         return "0"
 
 
-def invalidate_index(project_path: str | Path, source: str, media_type: str) -> None:
+@project_operation
+def invalidate_index(project_path: str | Path, source: str, media_type: str, *, destination=None) -> None:
     """Mark one derived index stale without scanning its canonical source tree."""
     from data.annotate import atomic_write_text
 
     path = _revision_path(project_path, source, media_type)
+    if destination is not None:
+        from data.resource_storage import unpublished_destination
+        path = unpublished_destination(project_path, destination)
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, uuid4().hex)
 
@@ -115,6 +121,7 @@ def invalidate_for_record(record_path: str | Path, source: str) -> bool:
     return False
 
 
+@project_operation
 def load_index(
     project_path: str | Path,
     source: str,
@@ -178,6 +185,7 @@ def _load_index_all_media(project_path: str | Path, source: str) -> dict:
     return {"status": "missing", "count": 0}
 
 
+@project_operation
 def rebuild_index(project_path: str | Path, source: str, media_type: str, *, registry=None, destination=None) -> dict:
     """Rebuild one source index from canonical sidecars."""
     from data.annotate import load_shot_type_lookup
@@ -190,6 +198,7 @@ def rebuild_index(project_path: str | Path, source: str, media_type: str, *, reg
     return _rebuild_index(project, source, media_type, shot_type_lookup, lookup_stats, **kwargs)
 
 
+@project_operation
 def rebuild_all(project_path: str | Path, media_type: str, *, registry=None) -> dict:
     """Rebuild both source indexes from one shared annotation type lookup."""
     from data.annotate import load_shot_type_lookup
@@ -277,6 +286,7 @@ def _rebuild_index(
     }
 
 
+@project_operation
 def query_facets(
     project_path: str | Path,
     source: str,
@@ -359,6 +369,7 @@ def query_facets(
     return {**status, "titles": titles, "fields": fields, "letters": letters, "labels": labels}
 
 
+@project_operation
 def query_field_counts(
     project_path: str | Path,
     source: str,
@@ -415,6 +426,7 @@ def query_field_counts(
     return {"status": status["status"], "count": count, "fields": fields}
 
 
+@project_operation
 def query_shot_type_counts(
     project_path: str | Path,
     source: str,
@@ -497,6 +509,7 @@ def _query_facets_all_media(project_path: str | Path, source: str, **filters) ->
     }
 
 
+@project_operation
 def query_page(
     project_path: str | Path,
     source: str,
@@ -649,6 +662,7 @@ def _sort_merged_records(
     return records
 
 
+@project_operation
 def resolve_record_destination(
     project_path: str | Path, source: str, identity: dict,
     *, page_size: int = 50, sort_keys: list[str] | None = None,
@@ -749,6 +763,7 @@ def query_records(
     ).get("records", [])
 
 
+@project_operation
 def query_untyped_records(
     project_path: str | Path,
     source: str,

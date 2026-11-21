@@ -1044,6 +1044,14 @@ def recovery_action(state, source_hash, destination_hash, before_hash, after_has
     return "stop-conflict-no-overwrite"
 
 
+def execute_fixture_renames(owner, plan, *, approved_digest, plan_identity, clients_stopped=False, known_pids=(), action="forward", interrupt=None):
+    """Qualify file moves only; no production mutation or graph installation."""
+    from services.resource_rename import execute
+
+    return execute(owner, plan, approved_digest=approved_digest, plan_identity=plan_identity,
+                   clients_stopped=clients_stopped, known_pids=known_pids, action=action, interrupt=interrupt)
+
+
 def activation_ready(*, planned, verified, unresolved, failures, indexes_ready, recovery_source_verified, writers_quiescent):
     if type(planned) is not int or planned < 1 or type(verified) is not int or verified < 0:
         return False

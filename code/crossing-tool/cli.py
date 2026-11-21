@@ -322,16 +322,19 @@ def cmd_path(args):
             print("(not set)")
         return
     from pathlib import Path
+    from tool.project_access import operation
+
     p = Path(args.folder).resolve()
-    prefs.set("path", str(p))
-    
-    # Auto-initialize version for new projects
-    if not _get_data_version(str(p)):
-        _set_data_version(str(p), _TOOL_VERSION)
-        print(f"Project path set to: {p}")
-        print(f"Data version initialized to: {_TOOL_VERSION}")
-    else:
-        print(f"Project path set to: {p}")
+    with operation(p):
+        prefs.set("path", str(p))
+
+        # Auto-initialize version for new projects
+        if not _get_data_version(str(p)):
+            _set_data_version(str(p), _TOOL_VERSION)
+            print(f"Project path set to: {p}")
+            print(f"Data version initialized to: {_TOOL_VERSION}")
+        else:
+            print(f"Project path set to: {p}")
 
 
 def cmd_name(args):
@@ -13107,6 +13110,22 @@ def build_parser():
 
 
 def main():
+    from contextlib import ExitStack
+    from tool.project_access import MaintenanceError, operation
+
+    try:
+        with ExitStack() as leases:
+            for project in (prefs.get("path"), os.environ.get("CROSSING_PROJECT")):
+                if project:
+                    leases.enter_context(operation(project))
+            _main_with_project_access(leases)
+    except MaintenanceError as error:
+        raise SystemExit(f"Project access refused: {error}") from error
+
+
+def _main_with_project_access(leases):
+    from tool.project_access import operation
+
     parser = build_parser()
     argcomplete.autocomplete(parser)
     if len(sys.argv) == 1:
@@ -13122,6 +13141,9 @@ def main():
             parser.error(f"unrecognized arguments: {' '.join(unrecognized_opts)}")
         if hasattr(args, "scope"):
             args.scope = list(args.scope or []) + [u for u in unknown if not u.startswith("-")]
+    explicit_project = getattr(args, "project", None) or getattr(args, "project_path", None)
+    if explicit_project:
+        leases.enter_context(operation(explicit_project))
     args.func(args)
 
 

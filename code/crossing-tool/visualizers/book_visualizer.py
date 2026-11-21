@@ -31,6 +31,7 @@ import shutil as _shutil
 import sys
 import uuid
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -3063,6 +3064,7 @@ class _IllustrationBrowserPanel(QWidget):
 class BookVisualizerWindow(WindowVisualizer):
     """Main window for the Book Visualizer."""
 
+    @project_operation
     def __init__(self, project_path: str) -> None:
         # Initialize attributes used by create_browser/create_inspector
         # before WindowVisualizer.__init__ runs (it calls those hooks).

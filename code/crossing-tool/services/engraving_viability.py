@@ -283,13 +283,17 @@ def load_cached_metrics(project_path: str | Path, record_paths: list[str],
 
 
 def store_cached_metrics(project_path: str | Path, entries: dict[str, dict],
-                         media_type: str = "movie") -> int:
+                         media_type: str = "movie", *, destination=None) -> int:
     """Persist measured metrics; returns the number of rows written."""
     if not entries:
         return 0
     if any(metrics.get("metrics_version") != METRICS_VERSION for metrics in entries.values()):
         raise ValueError("Cannot cache measurements from a different metrics version")
-    connection = _connect(cache_path(project_path, media_type))
+    target = cache_path(project_path, media_type)
+    if destination is not None:
+        from data.resource_storage import unpublished_destination
+        target = unpublished_destination(project_path, destination)
+    connection = _connect(target)
     try:
         connection.executemany(
             "INSERT OR REPLACE INTO viability (record_path, metrics_version, metrics) "

@@ -50,6 +50,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Optional
 
 import cv2
@@ -192,8 +193,18 @@ class _IllIpcServer(IpcServer):
 
     def __init__(self, project_path: str, parent=None) -> None:
         super().__init__(_ill_ipc_socket_path(project_path), parent)
+        self._project_path = project_path
 
     def _handle_message(self, msg: dict) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self._project_path):
+                self._dispatch_admitted(msg)
+        except MaintenanceError:
+            return
+
+    def _dispatch_admitted(self, msg: dict) -> None:
         if msg.get("action") == "navigate":
             self.navigate_requested.emit(
                 msg.get("film", ""),
@@ -205,6 +216,7 @@ class _IllIpcServer(IpcServer):
             )
 
 
+@project_operation
 def _ill_ipc_send_navigate(
     project_path: str,
     film: str = "",
@@ -249,14 +261,18 @@ class _DeleteWorker(QThread):
     """Delete an engraving directory in a background thread, then signal done."""
     finished = pyqtSignal()
 
-    def __init__(self, dir_path: Path, parent=None) -> None:
+    def __init__(self, dir_path: Path, parent=None, *, project_path: str) -> None:
         super().__init__(parent)
         self._dir_path = dir_path
+        self._project_path = project_path
 
     def run(self) -> None:
         import shutil
+        from tool.project_access import operation
+
         try:
-            shutil.rmtree(str(self._dir_path))
+            with operation(self._project_path):
+                shutil.rmtree(str(self._dir_path))
         except Exception:
             pass
         self.finished.emit()
@@ -337,6 +353,15 @@ class _IllustrationIndexWorker(QThread):
         )
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self._project_path):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.finished.emit(False, str(error))
+
+    def _run_admitted(self) -> None:
         try:
             from services.illustration_index import rebuild_all
             failed: list[str] = []
@@ -1923,7 +1948,7 @@ class IllustrationPane(QWidget):
         # Disable the button while deleting to prevent double-fire.
         self._eng_delete_btn.setEnabled(False)
         self._eng_delete_btn.setText("Deleting…")
-        self._delete_worker = _DeleteWorker(mode_dir, parent=self)
+        self._delete_worker = _DeleteWorker(mode_dir, parent=self, project_path=self._project_path)
         self._delete_worker.finished.connect(self._on_delete_finished)
         self._delete_worker.start()
 
@@ -2087,6 +2112,7 @@ class IllustrationWindow(WindowVisualizer):
     delegates browsing/presentation responsibilities to ``IllustrationPane``.
     """
 
+    @project_operation
     def __init__(
         self,
         project_path: str,
@@ -2136,6 +2162,18 @@ class IllustrationWindow(WindowVisualizer):
         self._ipc_server.start()
 
     def _on_ipc_navigate(
+            self, film: str, field: str, label: str, shot_id: str, media_type: str,
+            source_tab: str = "",
+    ) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self._project_path):
+                self._navigate_admitted(film, field, label, shot_id, media_type, source_tab)
+        except MaintenanceError:
+            return
+
+    def _navigate_admitted(
             self, film: str, field: str, label: str, shot_id: str, media_type: str,
             source_tab: str = "",
     ) -> None:

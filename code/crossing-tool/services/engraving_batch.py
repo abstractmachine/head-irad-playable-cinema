@@ -29,6 +29,8 @@ import json
 from pathlib import Path
 from typing import Callable
 
+from tool.project_access import project_operation
+
 from services.engraving_paths import engraving_status
 from services.silhouette_catalog import catalog_base_dir
 from services.silhouette_catalog import assignment_state_for_record
@@ -38,6 +40,7 @@ from services.silhouette_catalog import assignment_state_for_record
 # Scanning for best silhouettes
 # ---------------------------------------------------------------------------
 
+@project_operation
 def scan_best_silhouettes(
     project_path: str,
     media_type: str = "movie",
@@ -104,6 +107,7 @@ def scan_best_silhouettes(
 # Batch generation
 # ---------------------------------------------------------------------------
 
+@project_operation
 def batch_generate_engravings(
     project_path: str,
     targets: list[dict],

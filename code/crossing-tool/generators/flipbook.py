@@ -52,6 +52,7 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Any, Optional
 
 from PIL import Image, ImageDraw, ImageFont
@@ -366,6 +367,7 @@ def _render_cover_back(
 # Data loading
 # ---------------------------------------------------------------------------
 
+@project_operation
 def load_flipbook_data(
     project_path: str,
     filename: str,
@@ -642,6 +644,7 @@ def export_flipbook_pdf(
 # Movie-level entry points
 # ---------------------------------------------------------------------------
 
+@project_operation
 def generate_flipbook_for_movie(
     project_path: str,
     filename: str,
@@ -692,6 +695,7 @@ def generate_flipbook_for_movie(
     }
 
 
+@project_operation
 def generate_flipbook_for_all_movies(
     project_path: str,
     media_type: str = "movie",

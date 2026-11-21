@@ -21,6 +21,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from tool.project_access import project_operation
 
 from services.engraving_local_config import CONFIG_SCHEMA_VERSION, canonical_mode, resolve_config
 from services.engraving_local_paths import (
@@ -68,6 +69,7 @@ def _write_json(path: Path, payload: dict) -> None:
     atomic_write_text(path, json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
 
 
+@project_operation
 def convert_one(
     project_path: str | Path,
     source_json: str | Path,

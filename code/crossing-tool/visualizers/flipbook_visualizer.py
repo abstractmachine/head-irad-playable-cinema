@@ -31,6 +31,7 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Optional
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -315,6 +316,7 @@ class _FlipbookBrowserPage(QWidget):
 class FlipbookVisualizerWindow(WindowVisualizer):
     """Main window for the Flipbook Visualizer."""
 
+    @project_operation
     def __init__(
         self,
         project_path: str,

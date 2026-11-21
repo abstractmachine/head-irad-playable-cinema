@@ -50,17 +50,24 @@ def _project_file() -> Path | None:
 
 
 def _project_load() -> dict:
+    from tool.project_access import operation
+
     pf = _project_file()
-    if pf is not None and pf.exists():
-        return json.loads(pf.read_text())
+    if pf is not None:
+        with operation(pf.parents[1]):
+            if pf.exists():
+                return json.loads(pf.read_text())
     return {}
 
 
 def _project_save(data: dict) -> None:
+    from tool.project_access import operation
+
     pf = _project_file()
     if pf is None:
         return
-    _atomic_write_text(pf, json.dumps(data, indent=2))
+    with operation(pf.parents[1]):
+        _atomic_write_text(pf, json.dumps(data, indent=2))
 
 
 # ---------------------------------------------------------------------------

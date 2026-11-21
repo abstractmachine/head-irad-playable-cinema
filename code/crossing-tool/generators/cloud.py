@@ -27,6 +27,7 @@ import re
 import unicodedata
 from collections import Counter
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Any
 
 import numpy as np
@@ -335,6 +336,7 @@ def _iter_annotation_text(entries: list, field: str | None):
                     yield " ".join(str(x) for x in v)
 
 
+@project_operation
 def extract_annotation_words(
     project_path: str,
     *,
@@ -607,6 +609,7 @@ def render_cloud(
 # Shared entry point (CLI + UI)
 # ---------------------------------------------------------------------------
 
+@project_operation
 def cloud_from_annotations(
     project_path: str,
     *,

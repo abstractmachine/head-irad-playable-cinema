@@ -31,15 +31,17 @@ from visualizers.illustration_visualizer import (
 from visualizers import launcher
 
 
-def _fake_window(is_fullscreen: bool) -> MagicMock:
+def _fake_window(is_fullscreen: bool, project_path) -> MagicMock:
     win = MagicMock()
+    win._project_path = str(project_path)
+    win._navigate_admitted = lambda *args: IllustrationWindow._navigate_admitted(win, *args)
     win.isFullScreen.return_value = is_fullscreen
     win._catalog = MagicMock()
     return win
 
 
-def test_ipc_navigate_preserves_fullscreen() -> None:
-    win = _fake_window(is_fullscreen=True)
+def test_ipc_navigate_preserves_fullscreen(tmp_path) -> None:
+    win = _fake_window(is_fullscreen=True, project_path=tmp_path)
 
     IllustrationWindow._on_ipc_navigate(win, "film", "field", "label", "shot", "")
 
@@ -49,8 +51,8 @@ def test_ipc_navigate_preserves_fullscreen() -> None:
     win.activateWindow.assert_called_once()
 
 
-def test_ipc_navigate_shows_windowed_when_not_fullscreen() -> None:
-    win = _fake_window(is_fullscreen=False)
+def test_ipc_navigate_shows_windowed_when_not_fullscreen(tmp_path) -> None:
+    win = _fake_window(is_fullscreen=False, project_path=tmp_path)
 
     IllustrationWindow._on_ipc_navigate(win, "film", "field", "label", "shot", "")
 
@@ -61,8 +63,8 @@ def test_ipc_navigate_shows_windowed_when_not_fullscreen() -> None:
     win.activateWindow.assert_called_once()
 
 
-def test_ipc_navigate_selects_requested_engraving_source_tab() -> None:
-    win = _fake_window(is_fullscreen=False)
+def test_ipc_navigate_selects_requested_engraving_source_tab(tmp_path) -> None:
+    win = _fake_window(is_fullscreen=False, project_path=tmp_path)
 
     IllustrationWindow._on_ipc_navigate(
         win, "", "", "", "", "movie", "engravings",
@@ -94,7 +96,7 @@ def test_open_at_illustration_forwards_source_tab_and_field_over_ipc(monkeypatch
     assert sent["field"] == "wearing"
 
 
-def test_illustration_process_launcher_keeps_all_media_sentinel_as_media_value(monkeypatch) -> None:
+def test_illustration_process_launcher_keeps_all_media_sentinel_as_media_value(monkeypatch, tmp_path) -> None:
     launched = []
     monkeypatch.setattr(launcher, "raise_existing_window", lambda _subcommand: False)
     monkeypatch.setattr(launcher.QApplication, "instance", lambda: MagicMock())
@@ -102,7 +104,7 @@ def test_illustration_process_launcher_keeps_all_media_sentinel_as_media_value(m
 
     launcher.launch_visualizer(
         "illustration",
-        "/project",
+        str(tmp_path),
         media_type=ALL_MEDIA,
         initial_field="wearing",
         initial_source_tab="engravings",
@@ -111,7 +113,7 @@ def test_illustration_process_launcher_keeps_all_media_sentinel_as_media_value(m
     assert launched == [[
         launcher.sys.executable,
         str(launcher.Path(launcher.__file__).parent / "illustration_visualizer.py"),
-        "--project", "/project",
+        "--project", str(tmp_path),
         "--media=--all-media--",
         "--field", "wearing",
         "--source-tab", "engravings",

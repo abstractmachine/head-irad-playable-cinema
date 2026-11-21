@@ -56,9 +56,14 @@ def build_derived_vocabulary(
     force: bool = False,
     min_document_frequency: int = _MIN_DOCUMENT_FREQUENCY,
     registry=None,
+    destination=None,
+    write=True,
 ) -> dict:
     """Build the derived free-text vocabulary artifact."""
     output = derived_vocabulary_path(project_path, media_type)
+    if destination is not None:
+        from data.resource_storage import unpublished_destination
+        output = unpublished_destination(project_path, destination)
     context = {"registry": registry} if registry is not None else {}
     source_hash = _compute_source_hash(project_path, media_type, **context)
     if not force and output.exists():
@@ -145,9 +150,10 @@ def build_derived_vocabulary(
         },
         "fields": {DERIVED_FIELD: terms},
     }
-    output.parent.mkdir(parents=True, exist_ok=True)
-    from data.annotate import atomic_write_text
-    atomic_write_text(output, json.dumps(artifact, indent=2, ensure_ascii=False) + "\n")
+    if write:
+        output.parent.mkdir(parents=True, exist_ok=True)
+        from data.annotate import atomic_write_text
+        atomic_write_text(output, json.dumps(artifact, indent=2, ensure_ascii=False) + "\n")
     return artifact
 
 

@@ -211,14 +211,14 @@ def test_index_only_count_alphabetical_sorts_equal_counts_by_value(tmp_path):
     ]
 
 
-def test_vocabulary_worker_rejects_scoped_live_reconstruction(monkeypatch):
+def test_vocabulary_worker_rejects_scoped_live_reconstruction(tmp_path, monkeypatch):
     monkeypatch.setattr(
         search_mod,
         "vocabulary_from_index",
         lambda **kwargs: {"status": "ready", "items": [{"value": "horse", "count": 2}]},
     )
     results = []
-    worker = VocabularyWorker("animals", "Film.mp4", "/project", "movie")
+    worker = VocabularyWorker("animals", "Film.mp4", str(tmp_path), "movie")
     worker.result_ready.connect(results.append)
 
     worker.run()
@@ -226,7 +226,7 @@ def test_vocabulary_worker_rejects_scoped_live_reconstruction(monkeypatch):
     assert results == [{"status": "scope_unsupported"}]
 
 
-def test_vocabulary_worker_prepares_large_result_navigation(monkeypatch):
+def test_vocabulary_worker_prepares_large_result_navigation(tmp_path, monkeypatch):
     items = [
         {"value": f"apple {index}", "count": index}
         for index in range(VOCABULARY_RENDER_THRESHOLD)
@@ -237,7 +237,7 @@ def test_vocabulary_worker_prepares_large_result_navigation(monkeypatch):
         lambda **kwargs: {"status": "ready", "items": items},
     )
     results = []
-    worker = VocabularyWorker("objects", None, "/project", "movie")
+    worker = VocabularyWorker("objects", None, str(tmp_path), "movie")
     worker.result_ready.connect(results.append)
 
     worker.run()
@@ -249,7 +249,7 @@ def test_vocabulary_worker_prepares_large_result_navigation(monkeypatch):
     assert len(result["items"]) == VOCABULARY_RENDER_THRESHOLD + 1
 
 
-def test_vocabulary_worker_prepares_requested_prefix(monkeypatch):
+def test_vocabulary_worker_prepares_requested_prefix(tmp_path, monkeypatch):
     items = [
         {"value": "apple", "count": 2},
         {"value": "zebra", "count": 1},
@@ -260,7 +260,7 @@ def test_vocabulary_worker_prepares_requested_prefix(monkeypatch):
         lambda **kwargs: {"status": "ready", "items": items},
     )
     results = []
-    worker = VocabularyWorker("objects", None, "/project", "movie", prefix="z")
+    worker = VocabularyWorker("objects", None, str(tmp_path), "movie", prefix="z")
     worker.result_ready.connect(results.append)
 
     worker.run()
@@ -272,7 +272,7 @@ def test_vocabulary_worker_prepares_requested_prefix(monkeypatch):
 @pytest.mark.parametrize(
     "sort", ["count", "alphabetical", "count_alphabetical"],
 )
-def test_vocabulary_worker_passes_requested_sort(monkeypatch, sort):
+def test_vocabulary_worker_passes_requested_sort(tmp_path, monkeypatch, sort):
     calls = []
     monkeypatch.setattr(
         search_mod,
@@ -280,7 +280,7 @@ def test_vocabulary_worker_passes_requested_sort(monkeypatch, sort):
         lambda **kwargs: calls.append(kwargs) or {"status": "ready", "items": []},
     )
     results = []
-    worker = VocabularyWorker("objects", None, "/project", sort=sort)
+    worker = VocabularyWorker("objects", None, str(tmp_path), sort=sort)
     worker.result_ready.connect(results.append)
 
     worker.run()
@@ -288,19 +288,19 @@ def test_vocabulary_worker_passes_requested_sort(monkeypatch, sort):
     assert calls[0]["sort"] == sort
 
 
-def test_vocabulary_worker_uses_selected_field_for_family_routing(monkeypatch):
+def test_vocabulary_worker_uses_selected_field_for_family_routing(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         search_mod,
         "vocabulary_from_index",
         lambda **kwargs: calls.append(kwargs) or {"status": "ready", "items": []},
     )
-    worker = VocabularyWorker("description", None, "/project")
+    worker = VocabularyWorker("description", None, str(tmp_path))
 
     worker.run()
 
     assert calls == [{
-        "field": "description", "show_count": True, "project_path": "/project",
+        "field": "description", "show_count": True, "project_path": str(tmp_path),
         "media_type": "movie", "sort": "count",
     }]
 
@@ -792,7 +792,7 @@ def test_mosaic_restores_and_persists_vocabulary_sort(tmp_path, app, fake_prefs,
     window.close()
 
 
-def test_all_media_search_worker_queries_movie_and_gameplay(monkeypatch):
+def test_all_media_search_worker_queries_movie_and_gameplay(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(
         search_mod,
@@ -803,7 +803,7 @@ def test_all_media_search_worker_queries_movie_and_gameplay(monkeypatch):
     )
     results = []
     worker = SearchWorker(
-        "query", None, None, None, False, "/project",
+        "query", None, None, None, False, str(tmp_path),
         media_type="--all", shot_type="diegetic",
     )
     worker.tile_ready.connect(lambda result, _pixmap: results.append(result))
@@ -854,7 +854,7 @@ def test_search_shots_filters_by_exact_shot_type_and_untyped_values(tmp_path):
     }
 
 
-def test_shot_type_worker_reads_type_values_from_illustration_index(monkeypatch):
+def test_shot_type_worker_reads_type_values_from_illustration_index(tmp_path, monkeypatch):
     values = []
     monkeypatch.setattr(
         "services.illustration_index.query_shot_type_counts",
@@ -866,7 +866,7 @@ def test_shot_type_worker_reads_type_values_from_illustration_index(monkeypatch)
             ],
         },
     )
-    worker = ShotTypeWorker("/project", "--all")
+    worker = ShotTypeWorker(str(tmp_path), "--all")
     worker.result_ready.connect(values.append)
 
     worker.run()
@@ -877,7 +877,7 @@ def test_shot_type_worker_reads_type_values_from_illustration_index(monkeypatch)
     ]]
 
 
-def test_shot_type_facet_worker_uses_indexed_fields_and_vocabulary(monkeypatch):
+def test_shot_type_facet_worker_uses_indexed_fields_and_vocabulary(tmp_path, monkeypatch):
     calls = []
     results = []
     monkeypatch.setattr(
@@ -895,13 +895,13 @@ def test_shot_type_facet_worker_uses_indexed_fields_and_vocabulary(monkeypatch):
     )
 
     fields_worker = ShotTypeFacetWorker(
-        "/project", "--all", "diegetic", purpose="fields",
+        str(tmp_path), "--all", "diegetic", purpose="fields",
     )
     fields_worker.result_ready.connect(results.append)
     fields_worker.run()
 
     vocabulary_worker = ShotTypeFacetWorker(
-        "/project", "--all", "diegetic",
+        str(tmp_path), "--all", "diegetic",
         purpose="vocabulary", field="wearing", prefix="h", sort="count",
     )
     vocabulary_worker.result_ready.connect(results.append)
@@ -910,8 +910,8 @@ def test_shot_type_facet_worker_uses_indexed_fields_and_vocabulary(monkeypatch):
     from services.illustration_index import ALL_MEDIA
 
     assert calls == [
-        ("/project", "silhouettes", ALL_MEDIA, {"shot_type": "diegetic", "field": None}),
-        ("/project", "silhouettes", ALL_MEDIA, {"shot_type": "diegetic", "field": "wearing"}),
+        (str(tmp_path), "silhouettes", ALL_MEDIA, {"shot_type": "diegetic", "field": None}),
+        (str(tmp_path), "silhouettes", ALL_MEDIA, {"shot_type": "diegetic", "field": "wearing"}),
     ]
     assert results == [
         {"purpose": "fields", "status": "ready", "fields": ["objects", "wearing"]},

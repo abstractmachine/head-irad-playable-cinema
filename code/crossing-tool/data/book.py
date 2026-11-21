@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import shutil
 from pathlib import Path
+from tool.project_access import project_operation
 
 
 # ---------------------------------------------------------------------------
@@ -38,6 +39,7 @@ def book_json_path(project_path: str, slug: str) -> Path:
 # Load / save
 # ---------------------------------------------------------------------------
 
+@project_operation
 def load_book(project_path: str, slug: str) -> dict:
     """Load and return a book's metadata dict. Raises FileNotFoundError if absent."""
     path = book_json_path(project_path, slug)
@@ -46,6 +48,7 @@ def load_book(project_path: str, slug: str) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+@project_operation
 def save_book(project_path: str, slug: str, data: dict) -> None:
     """Write *data* to a book's book.json."""
     from data.annotate import atomic_write_text
@@ -58,6 +61,7 @@ def save_book(project_path: str, slug: str, data: dict) -> None:
 # CRUD
 # ---------------------------------------------------------------------------
 
+@project_operation
 def list_books(project_path: str) -> list[dict]:
     """Return all books as a list of metadata dicts, sorted by slug."""
     root = books_dir(project_path)
@@ -78,6 +82,7 @@ def list_books(project_path: str) -> list[dict]:
     return result
 
 
+@project_operation
 def create_book(project_path: str, slug: str) -> dict:
     """Create a new book directory and book.json. Raises FileExistsError if exists."""
     folder = book_dir(project_path, slug)
@@ -93,6 +98,7 @@ def create_book(project_path: str, slug: str) -> dict:
     return data
 
 
+@project_operation
 def delete_book(project_path: str, slug: str) -> None:
     """Delete a book directory entirely. Raises FileNotFoundError if absent."""
     folder = book_dir(project_path, slug)
@@ -105,6 +111,7 @@ def delete_book(project_path: str, slug: str) -> None:
 # PDF import
 # ---------------------------------------------------------------------------
 
+@project_operation
 def import_pdf(project_path: str, slug: str, pdf_source: str, *, force: bool = False) -> dict:
     """Copy *pdf_source* into the book folder and update book.json.
 

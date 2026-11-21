@@ -54,7 +54,39 @@ class WindowVisualizer(VisualizerWindow):
     Subclasses must implement `create_browser()` and `create_inspector()`.
     """
 
+    @property
+    def _resource_registry(self):
+        from pathlib import Path
+        from tool.project_access import canonical_registry
+        values = self.__dict__
+        project = values.get("project_path") or values.get("_project_path") or values.get("project")
+        explicit = values.get("_explicit_resource_registry")
+        committed = canonical_registry(project) if project else None
+        if committed is not None and explicit is not None and (Path(project) / explicit).resolve() != committed:
+            raise ValueError("Visualizer registry differs from accepted canonical context")
+        return committed if committed is not None else explicit
+
+    @_resource_registry.setter
+    def _resource_registry(self, value):
+        self.__dict__["_explicit_resource_registry"] = value
+
     def __init__(self, pref_key: Optional[str] = None, *, registry=None) -> None:
+        from contextlib import nullcontext
+        from tool import prefs
+        from tool.project_access import session
+
+        project = (self.__dict__.get("project_path") or self.__dict__.get("_project_path")
+                   or self.__dict__.get("project") or prefs.get("path"))
+        lease = session(project) if project else nullcontext()
+        lease.__enter__()
+        try:
+            self._initialize_shell(pref_key, registry=registry)
+        except BaseException:
+            lease.__exit__(None, None, None)
+            raise
+        self.destroyed.connect(lambda *_args: lease.__exit__(None, None, None))
+
+    def _initialize_shell(self, pref_key, *, registry=None):
         super().__init__()
         self._resource_registry = registry if registry is not None else getattr(self, "_resource_registry", None)
         self._pref_key = pref_key

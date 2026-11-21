@@ -19,7 +19,7 @@ import threading
 from types import SimpleNamespace
 
 import pytest
-from PyQt5.QtCore import QEvent, QPoint, Qt
+from PyQt5.QtCore import QCoreApplication, QEvent, QPoint, Qt
 from PyQt5.QtGui import QColor, QFontMetrics
 from PyQt5.QtTest import QTest
 from PyQt5.QtWidgets import QApplication, QLabel, QScrollArea, QTabBar
@@ -154,7 +154,7 @@ def test_get_live_project_columns_does_not_traverse_annotations(tmp_path, monkey
     }
 
 
-def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeypatch):
+def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeypatch, tmp_path):
     calls = []
 
     def load_metadata(_project_path, media_type):
@@ -186,7 +186,7 @@ def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeyp
         lambda _path: {"state": "ready", "count": 0, "labels": {}},
     )
 
-    columns = get_live_project_columns("/fake/project")
+    columns = get_live_project_columns(str(tmp_path))
     by_id = {column.id: column for column in columns}
 
     assert calls == ["movie", "gameplay"]
@@ -212,7 +212,7 @@ def test_media_item_payload_counts_reuse_the_loaded_metadata_collections(monkeyp
     }
 
 
-def test_media_items_project_cached_thumbnail_foregrounds_only_for_gameplay(
+def test_media_items_project_cached_thumbnail_foregrounds_only_for_gameplay(tmp_path,
     monkeypatch,
 ):
     import data.palette as palette_mod
@@ -253,17 +253,17 @@ def test_media_items_project_cached_thumbnail_foregrounds_only_for_gameplay(
         lambda _path: {"state": "ready", "count": 0, "labels": {}},
     )
 
-    columns = get_live_project_columns("/current/project")
+    columns = get_live_project_columns(str(tmp_path))
     by_id = {column.id: column for column in columns}
 
     assert by_id["movies"].datavis["items"][0]["thumbnail_foreground_rgb"] is None
     assert by_id["gameplay"].datavis["items"][0]["thumbnail_foreground_rgb"] == [
         210, 98, 7,
     ]
-    assert lookups == [("/current/project", "game_id", "gameplay")]
+    assert lookups == [(str(tmp_path), "game_id", "gameplay")]
 
 
-def test_missing_thumbnail_palettes_remain_explicit_without_extraction(monkeypatch):
+def test_missing_thumbnail_palettes_remain_explicit_without_extraction(tmp_path, monkeypatch):
     import data.palette as palette_mod
 
     monkeypatch.setattr(
@@ -286,7 +286,7 @@ def test_missing_thumbnail_palettes_remain_explicit_without_extraction(monkeypat
         lambda _path: {"state": "ready", "count": 0, "labels": {}},
     )
 
-    columns = get_live_project_columns("/current/project")
+    columns = get_live_project_columns(str(tmp_path))
     media_items = [
         item
         for column in columns[:2]
@@ -327,7 +327,7 @@ def test_get_live_project_columns_empty_project_reports_zero_not_unavailable(tmp
         assert by_id[col_id].datavis == {"kind": "empty"}
 
 
-def test_indexed_field_stats_combine_media_with_deterministic_order(monkeypatch):
+def test_indexed_field_stats_combine_media_with_deterministic_order(tmp_path, monkeypatch):
     def query(_project_path, source, media_type):
         assert source == "silhouettes"
         return {
@@ -342,7 +342,7 @@ def test_indexed_field_stats_combine_media_with_deterministic_order(monkeypatch)
 
     monkeypatch.setattr(illustration_index_mod, "query_field_counts", query)
 
-    assert get_indexed_field_stats("/fake/project", "silhouettes") == {
+    assert get_indexed_field_stats(str(tmp_path), "silhouettes") == {
         "state": "ready",
         "count": 6,
         "fields": [
@@ -353,18 +353,18 @@ def test_indexed_field_stats_combine_media_with_deterministic_order(monkeypatch)
     }
 
 
-def test_indexed_field_stats_preserve_valid_zero(monkeypatch):
+def test_indexed_field_stats_preserve_valid_zero(tmp_path, monkeypatch):
     monkeypatch.setattr(
         illustration_index_mod, "query_field_counts",
         lambda *_args: {"status": "ready", "count": 0, "fields": []},
     )
 
-    assert get_indexed_field_stats("/fake/project", "engravings") == {
+    assert get_indexed_field_stats(str(tmp_path), "engravings") == {
         "state": "ready", "count": 0, "fields": [],
     }
 
 
-def test_indexed_field_stats_preserve_values_from_usable_stale_index(monkeypatch):
+def test_indexed_field_stats_preserve_values_from_usable_stale_index(tmp_path, monkeypatch):
     monkeypatch.setattr(
         illustration_index_mod, "query_field_counts",
         lambda _project_path, _source, media_type: (
@@ -380,7 +380,7 @@ def test_indexed_field_stats_preserve_values_from_usable_stale_index(monkeypatch
         ),
     )
 
-    assert get_indexed_field_stats("/fake/project", "silhouettes") == {
+    assert get_indexed_field_stats(str(tmp_path), "silhouettes") == {
         "state": "stale",
         "reason": "silhouette_index_stale",
         "count": 4,
@@ -391,7 +391,7 @@ def test_indexed_field_stats_preserve_values_from_usable_stale_index(monkeypatch
     }
 
 
-def test_indexed_field_stats_preserve_synthetic_silhouette_category(monkeypatch):
+def test_indexed_field_stats_preserve_synthetic_silhouette_category(tmp_path, monkeypatch):
     monkeypatch.setattr(
         illustration_index_mod, "query_field_counts",
         lambda _project_path, _source, media_type: {
@@ -405,7 +405,7 @@ def test_indexed_field_stats_preserve_synthetic_silhouette_category(monkeypatch)
         },
     )
 
-    assert get_indexed_field_stats("/fake/project", "silhouettes") == {
+    assert get_indexed_field_stats(str(tmp_path), "silhouettes") == {
         "state": "ready",
         "count": 3,
         "fields": [
@@ -432,7 +432,7 @@ def test_indexed_field_stats_preserve_synthetic_silhouette_category(monkeypatch)
         ),
     ],
 )
-def test_indexed_field_stats_surface_unusable_indexes(
+def test_indexed_field_stats_surface_unusable_indexes(tmp_path,
     monkeypatch, source, status, expected,
 ):
     monkeypatch.setattr(
@@ -443,7 +443,7 @@ def test_indexed_field_stats_surface_unusable_indexes(
         },
     )
 
-    assert get_indexed_field_stats("/fake/project", source) == expected
+    assert get_indexed_field_stats(str(tmp_path), source) == expected
 
 
 def test_live_project_columns_keep_usable_stale_index_values(monkeypatch):
@@ -529,7 +529,7 @@ def test_live_project_field_payloads_read_only_current_indexes(tmp_path, monkeyp
 # Data model — cached tier (Shots/Vocabulary)
 # ---------------------------------------------------------------------------
 
-def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
+def test_get_cached_project_columns_reads_stats_cache(tmp_path, monkeypatch):
     fake_stats = {
         "annotated_shots": 5,
         "annotated_shot_types": [
@@ -551,7 +551,7 @@ def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
     )
     monkeypatch.setattr(corpus_stats_mod, "vocabulary_cache_is_stale", lambda p, media_type: False)
 
-    columns = get_cached_project_columns("/fake/project")
+    columns = get_cached_project_columns(str(tmp_path))
 
     assert [c.id for c in columns] == ["shots", "vocabulary"]
     counts = {c.id: c.count for c in columns}
@@ -568,7 +568,7 @@ def test_get_cached_project_columns_reads_stats_cache(monkeypatch):
     }
 
 
-def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(monkeypatch):
+def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(tmp_path, monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "get_corpus_stats_state",
         lambda p: {
@@ -588,7 +588,7 @@ def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(monkeypatch)
     )
     monkeypatch.setattr(corpus_stats_mod, "vocabulary_cache_is_stale", lambda p, media_type: True)
 
-    columns = get_cached_project_columns("/fake/project")
+    columns = get_cached_project_columns(str(tmp_path))
 
     assert columns[1].count is None
     assert columns[1].state == "stale"
@@ -599,7 +599,7 @@ def test_get_cached_project_columns_keeps_stale_vocabulary_distinct(monkeypatch)
     )
 
 
-def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypatch):
+def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(tmp_path, monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "get_corpus_stats_state",
         lambda p: {
@@ -618,7 +618,7 @@ def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypat
         },
     )
 
-    columns = get_cached_project_columns("/fake/project")
+    columns = get_cached_project_columns(str(tmp_path))
 
     assert columns[1].count is None
     assert columns[1].state == "stale"
@@ -627,7 +627,7 @@ def test_get_cached_project_columns_surfaces_vocabulary_count_mismatch(monkeypat
     assert (columns[0].id, columns[0].count) == ("shots", 0)
 
 
-def test_get_cached_project_columns_rejects_mismatched_shot_type_total(monkeypatch):
+def test_get_cached_project_columns_rejects_mismatched_shot_type_total(tmp_path, monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "get_corpus_stats_state",
         lambda _path: {
@@ -647,7 +647,7 @@ def test_get_cached_project_columns_rejects_mismatched_shot_type_total(monkeypat
     )
     monkeypatch.setattr(corpus_stats_mod, "vocabulary_cache_is_stale", lambda *_args: False)
 
-    shots = get_cached_project_columns("/fake/project")[0]
+    shots = get_cached_project_columns(str(tmp_path))[0]
 
     assert shots.count is None
     assert shots.state == "stale"
@@ -655,7 +655,7 @@ def test_get_cached_project_columns_rejects_mismatched_shot_type_total(monkeypat
     assert shots.datavis == {"kind": "empty"}
 
 
-def test_vocabulary_field_counts_sort_by_count_and_match_primary_total(monkeypatch):
+def test_vocabulary_field_counts_sort_by_count_and_match_primary_total(tmp_path, monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "load_vocabulary_index",
         lambda p, media_type: {
@@ -671,14 +671,14 @@ def test_vocabulary_field_counts_sort_by_count_and_match_primary_total(monkeypat
         },
     )
 
-    assert get_vocabulary_field_counts("/fake/project", expected_total=6) == [
+    assert get_vocabulary_field_counts(str(tmp_path), expected_total=6) == [
         {"field": "objects", "count": 3},
         {"field": "settings", "count": 2},
         {"field": "animals", "count": 1},
     ]
 
 
-def test_vocabulary_field_counts_surface_total_discrepancy(monkeypatch):
+def test_vocabulary_field_counts_surface_total_discrepancy(tmp_path, monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "load_vocabulary_index",
         lambda p, media_type: {
@@ -688,26 +688,26 @@ def test_vocabulary_field_counts_surface_total_discrepancy(monkeypatch):
     )
 
     with pytest.raises(ValueError, match="field total 2 does not match index total 3"):
-        get_vocabulary_field_counts("/fake/project", expected_total=3)
+        get_vocabulary_field_counts(str(tmp_path), expected_total=3)
 
 
-def test_get_cached_project_columns_unavailable_without_cache(monkeypatch):
+def test_get_cached_project_columns_unavailable_without_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(corpus_stats_mod, "get_corpus_stats_state", lambda p: {"state": "missing"})
 
-    columns = get_cached_project_columns("/fake/project")
+    columns = get_cached_project_columns(str(tmp_path))
 
     assert all(c.count is None for c in columns)
     assert all(c.state == "unavailable" for c in columns)
     assert all(c.reason == "corpus_stats_missing" for c in columns)
 
 
-def test_get_cached_project_columns_stale_without_recomputing(monkeypatch):
+def test_get_cached_project_columns_stale_without_recomputing(tmp_path, monkeypatch):
     monkeypatch.setattr(
         corpus_stats_mod, "get_corpus_stats_state",
         lambda p: {"state": "stale", "stats": {"vocabulary_terms": 1}},
     )
 
-    columns = get_cached_project_columns("/fake/project")
+    columns = get_cached_project_columns(str(tmp_path))
 
     assert all(c.count is None for c in columns)
     assert all(c.state == "stale" for c in columns)
@@ -781,7 +781,7 @@ def test_load_cached_corpus_stats_wrong_schema_version_returns_none(tmp_path):
 # Illustration index — never falls back to scanning the silhouette catalog
 # ---------------------------------------------------------------------------
 
-def test_get_illustration_stats_ready_combines_both_media_types(monkeypatch):
+def test_get_illustration_stats_ready_combines_both_media_types(tmp_path, monkeypatch):
     monkeypatch.setattr(
         illustration_index_mod, "load_index",
         lambda project_path, source, media_type: {"status": "ready", "count": 10, "usable": True},
@@ -791,7 +791,7 @@ def test_get_illustration_stats_ready_combines_both_media_types(monkeypatch):
         lambda project_path, source, media_type: {"labels": [{"label": "horse", "count": 7}]},
     )
 
-    result = get_illustration_stats("/fake/project")
+    result = get_illustration_stats(str(tmp_path))
 
     # Summed across both media types (movie + gameplay), since the fake
     # index reports the same values for either.
@@ -800,7 +800,7 @@ def test_get_illustration_stats_ready_combines_both_media_types(monkeypatch):
     assert result["labels"] == {"horse": 14}
 
 
-def test_get_illustration_stats_missing_index_reports_unavailable_without_scanning(monkeypatch):
+def test_get_illustration_stats_missing_index_reports_unavailable_without_scanning(tmp_path, monkeypatch):
     monkeypatch.setattr(
         illustration_index_mod, "load_index",
         lambda project_path, source, media_type: {"status": "missing", "count": 0, "usable": False},
@@ -811,12 +811,12 @@ def test_get_illustration_stats_missing_index_reports_unavailable_without_scanni
 
     monkeypatch.setattr(silhouette_catalog_mod, "audit_catalog", _fail)
 
-    result = get_illustration_stats("/fake/project")
+    result = get_illustration_stats(str(tmp_path))
 
     assert result == {"state": "unavailable", "reason": "illustration_index_missing"}
 
 
-def test_get_illustration_stats_stale_index_reports_stale_without_scanning(monkeypatch):
+def test_get_illustration_stats_stale_index_reports_stale_without_scanning(tmp_path, monkeypatch):
     def _load_index(project_path, source, media_type):
         if media_type == "movie":
             return {"status": "stale", "count": 5, "usable": True}
@@ -833,7 +833,7 @@ def test_get_illustration_stats_stale_index_reports_stale_without_scanning(monke
 
     monkeypatch.setattr(silhouette_catalog_mod, "audit_catalog", _fail)
 
-    result = get_illustration_stats("/fake/project")
+    result = get_illustration_stats(str(tmp_path))
 
     assert result == {
         "state": "stale",
@@ -894,16 +894,31 @@ def app():
 
 
 @pytest.fixture
-def fake_prefs(monkeypatch):
+def fake_prefs(monkeypatch, app, tmp_path):
+    import visualizers.project_visualizer as project_visualizer
+
+    existing = set(app.topLevelWidgets())
     store = {}
     monkeypatch.setattr("tool.prefs.get", lambda key, default=None: store.get(key, default))
     monkeypatch.setattr("tool.prefs.set", lambda key, value: store.__setitem__(key, value))
     monkeypatch.setattr("services.backup_mirror.backup_status", lambda *args: {})
-    return store
+    write_error_log = project_visualizer._write_error_log
+    monkeypatch.setattr(
+        project_visualizer, "_write_error_log",
+        lambda project, *args: write_error_log(project, *args) if str(project) == str(tmp_path) else None,
+    )
+    yield store
+    for window in set(app.topLevelWidgets()) - existing:
+        worker = getattr(window, "_project_columns_worker", None)
+        if worker is not None:
+            assert worker.wait(5000), "fixture Project worker did not drain"
+        window.close()
+        window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
 
 
-def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fake_prefs, monkeypatch):
-    fake_prefs["path"] = "/fake/project"
+def test_project_visualizer_headers_appear_immediately_in_loading_state(tmp_path, app, fake_prefs, monkeypatch):
+    fake_prefs["path"] = str(tmp_path)
     # Prevent the real background thread from running so we can inspect the
     # window in its just-constructed, pre-worker-completion state.
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
@@ -929,10 +944,10 @@ def test_project_visualizer_headers_appear_immediately_in_loading_state(app, fak
         window.close()
 
 
-def test_project_tools_section_contains_two_by_two_tool_buttons(
+def test_project_tools_section_contains_two_by_two_tool_buttons(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -967,8 +982,8 @@ def test_project_tools_section_contains_two_by_two_tool_buttons(
         window.close()
 
 
-def test_project_inspector_tab_shows_f1_suffix(app, fake_prefs, monkeypatch):
-    fake_prefs["path"] = "/fake/project"
+def test_project_inspector_tab_shows_f1_suffix(tmp_path, app, fake_prefs, monkeypatch):
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -990,7 +1005,7 @@ def test_project_inspector_tab_shows_f1_suffix(app, fake_prefs, monkeypatch):
 
 
 @pytest.mark.parametrize("media_type", ["movie", "gameplay"])
-def test_thumbnail_palette_cli_uses_canonical_argv_and_current_project(
+def test_thumbnail_palette_cli_uses_canonical_argv_and_current_project(tmp_path,
     monkeypatch, media_type,
 ):
     from visualizers.project_visualizer import (
@@ -1011,7 +1026,7 @@ def test_thumbnail_palette_cli_uses_canonical_argv_and_current_project(
     output_stream = object()
 
     result = _start_thumbnail_palette_cli(
-        "/current/project", media_type, output_stream,
+        str(tmp_path), media_type, output_stream,
     )
 
     assert result is sentinel
@@ -1024,14 +1039,14 @@ def test_thumbnail_palette_cli_uses_canonical_argv_and_current_project(
             "--media", media_type,
         ],
         {
-            "cwd": "/current/project",
+            "cwd": str(tmp_path),
             "stdout": output_stream,
             "stderr": subprocess.STDOUT,
         },
     )]
 
 
-def test_vocabulary_cli_uses_canonical_argv_and_current_project(monkeypatch):
+def test_vocabulary_cli_uses_canonical_argv_and_current_project(tmp_path, monkeypatch):
     from visualizers.project_visualizer import _CLI_PATH, _start_vocabulary_cli
 
     sentinel = object()
@@ -1046,7 +1061,7 @@ def test_vocabulary_cli_uses_canonical_argv_and_current_project(monkeypatch):
     )
     output_stream = object()
 
-    result = _start_vocabulary_cli("/current/project", output_stream)
+    result = _start_vocabulary_cli(str(tmp_path), output_stream)
 
     assert result is sentinel
     assert calls == [(
@@ -1056,14 +1071,14 @@ def test_vocabulary_cli_uses_canonical_argv_and_current_project(monkeypatch):
             "index", "vocabulary", "--all", "--force",
         ],
         {
-            "cwd": "/current/project",
+            "cwd": str(tmp_path),
             "stdout": output_stream,
             "stderr": subprocess.STDOUT,
         },
     )]
 
 
-def test_illustration_cli_uses_both_media_and_current_project(monkeypatch):
+def test_illustration_cli_uses_both_media_and_current_project(tmp_path, monkeypatch):
     from visualizers.project_visualizer import _CLI_PATH, _start_illustration_cli
 
     sentinel = object()
@@ -1078,7 +1093,7 @@ def test_illustration_cli_uses_both_media_and_current_project(monkeypatch):
     )
     output_stream = object()
 
-    result = _start_illustration_cli("/current/project", output_stream)
+    result = _start_illustration_cli(str(tmp_path), output_stream)
 
     assert result is sentinel
     assert calls == [(
@@ -1088,7 +1103,7 @@ def test_illustration_cli_uses_both_media_and_current_project(monkeypatch):
             "index", "illustration", "--media", "both",
         ],
         {
-            "cwd": "/current/project",
+            "cwd": str(tmp_path),
             "stdout": output_stream,
             "stderr": subprocess.STDOUT,
         },
@@ -1096,7 +1111,7 @@ def test_illustration_cli_uses_both_media_and_current_project(monkeypatch):
 
 
 @pytest.mark.parametrize("source", ["shot", "silhouettes"])
-def test_untyped_audit_cli_uses_canonical_argv_and_current_project(
+def test_untyped_audit_cli_uses_canonical_argv_and_current_project(tmp_path,
     monkeypatch, source,
 ):
     from visualizers.project_visualizer import _CLI_PATH, _start_untyped_audit_cli
@@ -1112,7 +1127,7 @@ def test_untyped_audit_cli_uses_canonical_argv_and_current_project(
         "visualizers.project_visualizer.subprocess.Popen", fake_popen,
     )
 
-    result = _start_untyped_audit_cli("/current/project", source)
+    result = _start_untyped_audit_cli(str(tmp_path), source)
 
     assert result is sentinel
     assert calls == [(
@@ -1121,14 +1136,14 @@ def test_untyped_audit_cli_uses_canonical_argv_and_current_project(
             str(_CLI_PATH),
             "index", "untyped", "--source", source,
         ],
-        {"cwd": "/current/project"},
+        {"cwd": str(tmp_path)},
     )]
 
 
-def test_vocabulary_tool_runs_once_then_refreshes_project_columns(
+def test_vocabulary_tool_runs_once_then_refreshes_project_columns(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1162,7 +1177,7 @@ def test_vocabulary_tool_runs_once_then_refreshes_project_columns(
         QTest.mouseClick(window.rebuild_vocabulary_btn, Qt.LeftButton)
 
         assert len(launches) == 1
-        assert launches[0][0] == "/current/project"
+        assert launches[0][0] == str(tmp_path)
         assert not window.rebuild_vocabulary_btn.isEnabled()
         assert window.rebuild_vocabulary_btn.text() == "indexing"
         assert not window.thumbnail_palettes_btn.isEnabled()
@@ -1190,10 +1205,10 @@ def test_vocabulary_tool_runs_once_then_refreshes_project_columns(
         window.close()
 
 
-def test_vocabulary_tool_restores_buttons_and_surfaces_cli_failure(
+def test_vocabulary_tool_restores_buttons_and_surfaces_cli_failure(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1248,10 +1263,10 @@ def test_vocabulary_tool_restores_buttons_and_surfaces_cli_failure(
         window.close()
 
 
-def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
+def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1286,7 +1301,7 @@ def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
         QTest.mouseClick(window.thumbnail_palettes_btn, Qt.LeftButton)
 
         assert [(path, media) for path, media, _output, _proc in launches] == [
-            ("/current/project", "movie"),
+            (str(tmp_path), "movie"),
         ]
         assert not window.thumbnail_palettes_btn.isEnabled()
         assert window.thumbnail_palettes_btn.text() == "indexing"
@@ -1303,8 +1318,8 @@ def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
         launches[0][3].returncode = 0
         window._poll_thumbnail_palette_cli()
         assert [(path, media) for path, media, _output, _proc in launches] == [
-            ("/current/project", "movie"),
-            ("/current/project", "gameplay"),
+            (str(tmp_path), "movie"),
+            (str(tmp_path), "gameplay"),
         ]
         assert refreshes == []
 
@@ -1323,10 +1338,10 @@ def test_thumbnail_palette_tool_runs_both_media_once_then_refreshes(
         window.close()
 
 
-def test_thumbnail_palette_tool_restores_button_and_surfaces_cli_failure(
+def test_thumbnail_palette_tool_restores_button_and_surfaces_cli_failure(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1369,8 +1384,8 @@ def test_thumbnail_palette_tool_restores_button_and_surfaces_cli_failure(
         window._poll_thumbnail_palette_cli()
 
         assert launches == [
-            ("/current/project", "movie"),
-            ("/current/project", "gameplay"),
+            (str(tmp_path), "movie"),
+            (str(tmp_path), "gameplay"),
         ]
         assert not window.thumbnail_palettes_btn.isEnabled()
         assert messages == []
@@ -1394,10 +1409,10 @@ def test_thumbnail_palette_tool_restores_button_and_surfaces_cli_failure(
         window.close()
 
 
-def test_illustration_tool_indexes_both_media_then_refreshes(
+def test_illustration_tool_indexes_both_media_then_refreshes(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1431,7 +1446,7 @@ def test_illustration_tool_indexes_both_media_then_refreshes(
         QTest.mouseClick(window.index_illustrations_btn, Qt.LeftButton)
 
         assert len(launches) == 1
-        assert launches[0][0] == "/current/project"
+        assert launches[0][0] == str(tmp_path)
         assert not window.index_illustrations_btn.isEnabled()
         assert window.index_illustrations_btn.text() == "indexing"
         assert not window.thumbnail_palettes_btn.isEnabled()
@@ -1460,10 +1475,10 @@ def test_illustration_tool_indexes_both_media_then_refreshes(
         window.close()
 
 
-def test_illustration_tool_restores_controls_and_surfaces_cli_failure(
+def test_illustration_tool_restores_controls_and_surfaces_cli_failure(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1518,10 +1533,10 @@ def test_illustration_tool_restores_controls_and_surfaces_cli_failure(
         window.close()
 
 
-def test_index_all_runs_every_index_in_order_then_refreshes(
+def test_index_all_runs_every_index_in_order_then_refreshes(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1607,10 +1622,10 @@ def test_index_all_runs_every_index_in_order_then_refreshes(
         window.close()
 
 
-def test_index_all_continues_after_failure_then_reports_without_refresh(
+def test_index_all_continues_after_failure_then_reports_without_refresh(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -1696,7 +1711,7 @@ def test_index_all_continues_after_failure_then_reports_without_refresh(
         window.close()
 
 
-def test_project_visualizer_first_show_uses_saved_geometry_while_loading(
+def test_project_visualizer_first_show_uses_saved_geometry_while_loading(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
     from PyQt5.QtCore import QRect
@@ -1707,7 +1722,7 @@ def test_project_visualizer_first_show_uses_saved_geometry_while_loading(
         def availableGeometry():
             return QRect(0, 0, 1920, 1080)
 
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     fake_prefs["window_project"] = [40, 50, 1000, 650, 0, 0]
     monkeypatch.setattr(
         QApplication, "primaryScreen", staticmethod(lambda: _DesktopScreen()),
@@ -1735,10 +1750,10 @@ def test_project_visualizer_first_show_uses_saved_geometry_while_loading(
         window.close()
 
 
-def test_project_visualizer_datavis_body_is_borderless_at_multiple_widths(
+def test_project_visualizer_datavis_body_is_borderless_at_multiple_widths(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -1772,10 +1787,10 @@ def test_project_visualizer_datavis_body_is_borderless_at_multiple_widths(
         app.processEvents()
 
 
-def test_project_visualizer_header_count_rows_are_equal_and_datavis_follows(
+def test_project_visualizer_header_count_rows_are_equal_and_datavis_follows(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -1805,10 +1820,10 @@ def test_project_visualizer_header_count_rows_are_equal_and_datavis_follows(
         app.processEvents()
 
 
-def test_project_media_datavis_uses_canonical_horizontal_content_gutters(
+def test_project_media_datavis_uses_canonical_horizontal_content_gutters(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -2287,10 +2302,10 @@ def test_compact_media_popup_hides_when_datavis_is_left(
     ("movie", "dodge-city.mp4"),
     ("gameplay", "rdr2-session.mp4"),
 ])
-def test_media_item_clicks_use_canonical_shotlist_navigation(
+def test_media_item_clicks_use_canonical_shotlist_navigation(tmp_path,
     app, fake_prefs, monkeypatch, media_type, filename,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
     opened = []
     monkeypatch.setattr(
@@ -2330,15 +2345,15 @@ def test_media_item_clicks_use_canonical_shotlist_navigation(
         app.processEvents()
         assert f"background: {theme.ACCENT}" in cell.styleSheet()
         QTest.mouseDClick(cell, Qt.LeftButton)
-        assert opened == [("/fake/project", filename, media_type)]
+        assert opened == [(str(tmp_path), filename, media_type)]
 
         QApplication.sendEvent(cell, QEvent(QEvent.Leave))
         assert f"background: {theme.CELL_BG}" in cell.styleSheet()
 
         QTest.mouseClick(cell, Qt.LeftButton)
         assert opened == [
-            ("/fake/project", filename, media_type),
-            ("/fake/project", filename, media_type),
+            (str(tmp_path), filename, media_type),
+            (str(tmp_path), filename, media_type),
         ]
     finally:
         window.close()
@@ -2346,10 +2361,10 @@ def test_media_item_clicks_use_canonical_shotlist_navigation(
         app.processEvents()
 
 
-def test_media_item_click_opens_only_the_activated_cell(
+def test_media_item_click_opens_only_the_activated_cell(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
     opened = []
     monkeypatch.setattr(
@@ -2406,10 +2421,10 @@ def test_media_item_click_opens_only_the_activated_cell(
         ("engravings", "illustration", {"source_tab": "engravings"}),
     ],
 )
-def test_project_column_header_click_and_double_click_open_expected_visualizer(
+def test_project_column_header_click_and_double_click_open_expected_visualizer(tmp_path,
     app, fake_prefs, monkeypatch, column_id, expected_subcommand, expected_kwargs,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -2458,12 +2473,12 @@ def test_project_column_headers_use_token_driven_hover_style(app):
         app.processEvents()
 
 
-def test_project_launch_selects_requested_tab_in_existing_metadata_window(
+def test_project_launch_selects_requested_tab_in_existing_metadata_window(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
     from unittest.mock import MagicMock
 
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
     monkeypatch.setattr("visualizers._window_helpers.raise_existing_window", lambda _subcommand: True)
 
@@ -2499,12 +2514,28 @@ def test_metadata_visualizer_selects_requested_initial_media_tab(app, fake_prefs
         app.processEvents()
 
 
-def test_project_launch_selects_requested_scope_and_type_in_existing_mosaic(
+def test_metadata_deferred_thumbnail_update_is_cancelled_on_destruction(app, fake_prefs, tmp_path, monkeypatch):
+    from visualizers.metadata_visualizer import MetadataVisualizer
+
+    fake_prefs["path"] = str(tmp_path)
+    errors = []
+    monkeypatch.setattr(sys, "excepthook", lambda error_type, error, traceback: errors.append(error))
+    window = MetadataVisualizer(str(tmp_path))
+    app.processEvents()
+    window._fit_splitter_width()
+    window.close()
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    app.processEvents()
+    assert errors == []
+
+
+def test_project_launch_selects_requested_scope_and_type_in_existing_mosaic(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
     from unittest.mock import MagicMock
 
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
     monkeypatch.setattr("visualizers._window_helpers.raise_existing_window", lambda _subcommand: True)
 
@@ -2524,12 +2555,12 @@ def test_project_launch_selects_requested_scope_and_type_in_existing_mosaic(
         app.processEvents()
 
 
-def test_project_launch_selects_exact_field_in_existing_mosaic(
+def test_project_launch_selects_exact_field_in_existing_mosaic(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
     from unittest.mock import MagicMock
 
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
     monkeypatch.setattr("visualizers._window_helpers.raise_existing_window", lambda _subcommand: True)
 
@@ -2550,7 +2581,7 @@ def test_project_launch_selects_exact_field_in_existing_mosaic(
         app.processEvents()
 
 
-def test_project_constructs_new_mosaic_with_requested_initial_field(monkeypatch):
+def test_project_constructs_new_mosaic_with_requested_initial_field(tmp_path, monkeypatch):
     from unittest.mock import MagicMock
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -2563,23 +2594,23 @@ def test_project_constructs_new_mosaic_with_requested_initial_field(monkeypatch)
     result = ProjectVisualizer._create_in_process_window(
         owner,
         "mosaic",
-        "/fake/project",
+        str(tmp_path),
         field="wearing",
     )
 
     assert result is mosaic.return_value
     mosaic.assert_called_once_with(
-        "/fake/project",
+        str(tmp_path),
         media_type="movie",
         shot_type=None,
         initial_field="wearing",
     )
 
 
-def test_project_vocabulary_cell_click_and_double_click_open_mosaic_at_field(
+def test_project_vocabulary_cell_click_and_double_click_open_mosaic_at_field(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -2650,10 +2681,10 @@ def test_project_vocabulary_cell_hover_uses_theme_accent(app):
 
 
 @pytest.mark.parametrize("shot_type", ["diegetic", "<untyped>"])
-def test_project_shot_type_cell_click_and_double_click_open_mosaic_at_type(
+def test_project_shot_type_cell_click_and_double_click_open_mosaic_at_type(tmp_path,
     app, fake_prefs, monkeypatch, shot_type,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -2706,10 +2737,10 @@ def test_project_shot_type_cell_click_and_double_click_open_mosaic_at_type(
         ("engravings", "engraving_fields", "engravings"),
     ],
 )
-def test_project_illustration_field_cell_click_and_double_click_open_filtered_source(
+def test_project_illustration_field_cell_click_and_double_click_open_filtered_source(tmp_path,
     app, fake_prefs, monkeypatch, column_id, datavis_kind, source_tab,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from services.illustration_index import ALL_MEDIA
@@ -3029,10 +3060,10 @@ def test_shot_type_cells_emit_exact_type_including_synthetic_untyped(app):
         app.processEvents()
 
 
-def test_project_maps_untyped_datavis_kinds_to_cli_sources(
+def test_project_maps_untyped_datavis_kinds_to_cli_sources(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/current/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
         lambda self: None,
@@ -3052,8 +3083,8 @@ def test_project_maps_untyped_datavis_kinds_to_cli_sources(
         window._open_untyped_audit("vocabulary_fields")
 
         assert launches == [
-            ("/current/project", "shot"),
-            ("/current/project", "silhouettes"),
+            (str(tmp_path), "shot"),
+            (str(tmp_path), "silhouettes"),
         ]
     finally:
         window.close()
@@ -3678,10 +3709,10 @@ def test_project_vocabulary_count_width_uses_styled_label_size_hint(app):
         app.processEvents()
 
 
-def test_project_visualizer_splitter_has_no_extra_browser_inspector_gap(
+def test_project_visualizer_splitter_has_no_extra_browser_inspector_gap(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -3713,10 +3744,10 @@ def test_project_visualizer_splitter_has_no_extra_browser_inspector_gap(
         app.processEvents()
 
 
-def test_project_visualizer_construction_starts_exactly_one_initial_worker(
+def test_project_visualizer_construction_starts_exactly_one_initial_worker(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     starts = []
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
@@ -3736,10 +3767,10 @@ def test_project_visualizer_construction_starts_exactly_one_initial_worker(
         app.processEvents()
 
 
-def test_project_visualizer_show_does_not_restart_running_initial_load(
+def test_project_visualizer_show_does_not_restart_running_initial_load(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     release_worker = threading.Event()
     worker_started = threading.Event()
 
@@ -3799,10 +3830,10 @@ def test_project_visualizer_show_does_not_restart_running_initial_load(
         app.processEvents()
 
 
-def test_project_visualizer_show_hide_does_not_restart_loaded_initial_load(
+def test_project_visualizer_show_hide_does_not_restart_loaded_initial_load(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     starts = []
     monkeypatch.setattr(
         "visualizers.project_visualizer._ProjectColumnsWorker.start",
@@ -3842,7 +3873,7 @@ def test_project_visualizer_show_hide_does_not_restart_loaded_initial_load(
         app.processEvents()
 
 
-def test_project_columns_worker_emits_generation_with_both_tiers(app, monkeypatch):
+def test_project_columns_worker_emits_generation_with_both_tiers(tmp_path, app, monkeypatch):
     from visualizers.project_visualizer import _ProjectColumnsWorker
 
     live_columns = [
@@ -3861,7 +3892,7 @@ def test_project_columns_worker_emits_generation_with_both_tiers(app, monkeypatc
     monkeypatch.setattr(corpus_stats_mod, "get_cached_project_columns", lambda _path: cached_columns)
 
     results = []
-    worker = _ProjectColumnsWorker("/fake/project", generation=17)
+    worker = _ProjectColumnsWorker(str(tmp_path), generation=17)
     worker.tier_ready.connect(
         lambda generation, columns: results.append((generation, columns))
     )
@@ -3871,7 +3902,7 @@ def test_project_columns_worker_emits_generation_with_both_tiers(app, monkeypatc
     assert results == [(17, live_columns), (17, cached_columns)]
 
 
-def test_project_columns_worker_reports_live_failure_and_still_attempts_cached(
+def test_project_columns_worker_reports_live_failure_and_still_attempts_cached(tmp_path,
     app, monkeypatch,
 ):
     from visualizers.project_visualizer import _ProjectColumnsWorker
@@ -3890,7 +3921,7 @@ def test_project_columns_worker_reports_live_failure_and_still_attempts_cached(
     monkeypatch.setattr(corpus_stats_mod, "get_cached_project_columns", lambda _path: cached_columns)
 
     events = []
-    worker = _ProjectColumnsWorker("/fake/project", generation=17)
+    worker = _ProjectColumnsWorker(str(tmp_path), generation=17)
     worker.tier_ready.connect(
         lambda generation, columns: events.append(("ready", generation, columns))
     )
@@ -3908,7 +3939,7 @@ def test_project_columns_worker_reports_live_failure_and_still_attempts_cached(
     ]
 
 
-def test_project_columns_worker_reports_cached_failure_after_live_result(
+def test_project_columns_worker_reports_cached_failure_after_live_result(tmp_path,
     app, monkeypatch,
 ):
     from visualizers.project_visualizer import _ProjectColumnsWorker
@@ -3927,7 +3958,7 @@ def test_project_columns_worker_reports_cached_failure_after_live_result(
     monkeypatch.setattr(corpus_stats_mod, "get_cached_project_columns", fail_cached)
 
     events = []
-    worker = _ProjectColumnsWorker("/fake/project", generation=23)
+    worker = _ProjectColumnsWorker(str(tmp_path), generation=23)
     worker.tier_ready.connect(
         lambda generation, columns: events.append(("ready", generation, columns))
     )
@@ -3945,10 +3976,10 @@ def test_project_columns_worker_reports_cached_failure_after_live_result(
     ]
 
 
-def test_project_visualizer_live_failure_settles_tier_and_preserves_cached_results(
+def test_project_visualizer_live_failure_settles_tier_and_preserves_cached_results(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -3989,10 +4020,10 @@ def test_project_visualizer_live_failure_settles_tier_and_preserves_cached_resul
         window.close()
 
 
-def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_results(
+def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_results(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -4044,10 +4075,10 @@ def test_project_visualizer_cached_failure_settles_tier_and_preserves_live_resul
         window.close()
 
 
-def test_project_visualizer_ignores_stale_generation_tier_failure(
+def test_project_visualizer_ignores_stale_generation_tier_failure(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -4072,10 +4103,10 @@ def test_project_visualizer_ignores_stale_generation_tier_failure(
         window.close()
 
 
-def test_project_visualizer_rejects_older_generation_without_affecting_current_load(
+def test_project_visualizer_rejects_older_generation_without_affecting_current_load(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -4111,10 +4142,10 @@ def test_project_visualizer_rejects_older_generation_without_affecting_current_l
         window.close()
 
 
-def test_project_visualizer_old_live_tier_cannot_overwrite_new_generation(
+def test_project_visualizer_old_live_tier_cannot_overwrite_new_generation(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -4149,10 +4180,10 @@ def test_project_visualizer_old_live_tier_cannot_overwrite_new_generation(
         window.close()
 
 
-def test_project_visualizer_old_cached_tier_cannot_overwrite_new_generation(
+def test_project_visualizer_old_cached_tier_cannot_overwrite_new_generation(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -4187,10 +4218,10 @@ def test_project_visualizer_old_cached_tier_cannot_overwrite_new_generation(
         window.close()
 
 
-def test_project_visualizer_current_generation_tier_updates_only_matching_columns(
+def test_project_visualizer_current_generation_tier_updates_only_matching_columns(tmp_path,
     app, fake_prefs, monkeypatch,
 ):
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -4225,8 +4256,8 @@ def test_project_visualizer_current_generation_tier_updates_only_matching_column
         window.close()
 
 
-def test_project_visualizer_unavailable_column_shows_compact_index_status(app, fake_prefs, monkeypatch):
-    fake_prefs["path"] = "/fake/project"
+def test_project_visualizer_unavailable_column_shows_compact_index_status(tmp_path, app, fake_prefs, monkeypatch):
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr("visualizers.project_visualizer._ProjectColumnsWorker.start", lambda self: None)
 
     from visualizers.project_visualizer import ProjectVisualizer
@@ -4255,9 +4286,9 @@ def test_project_visualizer_unavailable_column_shows_compact_index_status(app, f
         window.close()
 
 
-def test_project_visualizer_worker_populates_columns_end_to_end(app, fake_prefs, monkeypatch):
+def test_project_visualizer_worker_populates_columns_end_to_end(tmp_path, app, fake_prefs, monkeypatch):
     """Real QThread run, not mocked — proves the signal wiring actually works."""
-    fake_prefs["path"] = "/fake/project"
+    fake_prefs["path"] = str(tmp_path)
     monkeypatch.setattr(
         corpus_stats_mod, "get_live_project_columns",
         lambda p: [ProjectColumn(id="movies", title="Movies", count=314, datavis={"kind": "empty"}, state="ready"),

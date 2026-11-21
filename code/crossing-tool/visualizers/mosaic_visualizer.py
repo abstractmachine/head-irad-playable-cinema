@@ -27,6 +27,7 @@ import subprocess
 import sys
 from functools import lru_cache
 from pathlib import Path
+from tool.project_access import project_operation
 
 # Allow imports from the tool root (data/, services/, generators/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -427,6 +428,15 @@ class SearchWorker(QThread):
         self._cancelled = True
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self.project_path):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.error.emit(str(error))
+
+    def _run_admitted(self) -> None:
         try:
             from services.search import search_shots
 
@@ -569,6 +579,15 @@ class VocabularyWorker(QThread):
         self.registry     = registry
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self.project_path):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.error.emit(str(error))
+
+    def _run_admitted(self) -> None:
         try:
             from services.search import vocabulary_from_index
             result = vocabulary_from_index(
@@ -630,6 +649,15 @@ class ShotTypeWorker(QThread):
         self.media_type = media_type
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self.project_path):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.error.emit(str(error))
+
+    def _run_admitted(self) -> None:
         try:
             from data.annotate import UNTYPED_SHOT_TYPE
             from services.illustration_index import ALL_MEDIA, query_shot_type_counts
@@ -680,6 +708,15 @@ class ShotTypeFacetWorker(QThread):
         self.sort = sort
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self.project_path):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.error.emit(str(error))
+
+    def _run_admitted(self) -> None:
         try:
             from services.illustration_index import ALL_MEDIA, query_facets
 
@@ -1235,6 +1272,7 @@ class PdfExportWorker(QThread):
 class MosaicVisualizer(WindowVisualizer):
     """Interactive mosaic visualizer window — canvas browser, controls in the inspector."""
 
+    @project_operation
     def __init__(
         self,
         project_path: str,

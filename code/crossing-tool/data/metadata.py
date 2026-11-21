@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 import warnings
 
+from tool.project_access import project_operation
+
 _MEDIA_TYPES = ("movie", "gameplay")
 
 
@@ -42,6 +44,7 @@ def _all_metadata(project_path: str, media_type: str | None = None) -> list[dict
     return results
 
 
+@project_operation
 def get_metadata(project_path: str, query: str | None = None, media_type: str = "movie") -> list[dict]:
     """Return metadata entries.
 
@@ -72,6 +75,7 @@ def get_metadata(project_path: str, query: str | None = None, media_type: str = 
     ]
 
 
+@project_operation
 def set_metadata(project_path: str, data: dict, match_filename: str | None = None, *, registry=None, approved=False) -> Path:
     """Write metadata to the JSON file for the appropriate media type.
 
@@ -121,6 +125,7 @@ def set_metadata(project_path: str, data: dict, match_filename: str | None = Non
                               **({"registry": registry, "approved": approved} if registry is not None else {}))
 
 
+@project_operation
 def prune_metadata(project_path: str, media_type: str = "movie") -> list[dict]:
     """Delete metadata records whose file no longer exists on disk.
 
@@ -474,6 +479,7 @@ def _json_path(project_path: str, media_type: str) -> Path:
     return Path(project_path) / "data" / "metadata" / f"{media_type}.json"
 
 
+@project_operation
 def load_json_metadata(project_path: str, media_type: str) -> list[dict]:
     """Load records from the JSON metadata file.  Returns [] if the file does not exist.
 
@@ -489,6 +495,7 @@ def load_json_metadata(project_path: str, media_type: str) -> list[dict]:
     return data.get("media", [])
 
 
+@project_operation
 def save_json_metadata(project_path: str, media_type: str, records: list[dict], *, registry=None, approved=False) -> Path:
     """Write *records* to the JSON metadata file (overwrites atomically)."""
     from data.annotate import atomic_write_text
@@ -512,6 +519,7 @@ def save_json_metadata(project_path: str, media_type: str, records: list[dict], 
     return path
 
 
+@project_operation
 def upsert_json_record(
     project_path: str,
     record: dict,
@@ -542,6 +550,7 @@ def upsert_json_record(
     return save_json_metadata(project_path, media_type, records, **({"registry": registry, "approved": approved} if registry is not None else {}))
 
 
+@project_operation
 def migrate_csv_to_json(project_path: str, media_type: str) -> dict:
     """Read the CSV for *media_type*, assign media_ids, and write a JSON file.
 
@@ -593,6 +602,7 @@ def migrate_csv_to_json(project_path: str, media_type: str) -> dict:
     return {"written": len(records), "path": str(path), "skipped_ids": skipped}
 
 
+@project_operation
 def check_metadata_sync(project_path: str, media_type: str) -> dict:
     """Compare the CSV and JSON metadata for *media_type*.
 

@@ -31,6 +31,7 @@ import shutil
 import string
 from datetime import datetime, timezone
 from pathlib import Path
+from tool.project_access import project_operation
 
 from services.engraving_paths import engraving_paths, resolve_silhouette_png
 from services.engraving_prompt import load_engraving_prompt
@@ -316,6 +317,7 @@ def _generate_registered_openai(project, registry, source, mode, model, size, ap
             "mode": mode, "model": model, "size": size, "project": str(project), "expanded_prompt_length": len(prompt)}
 
 
+@project_operation
 def generate_engraving_openai(
     project_path: str,
     source_json: str | Path,

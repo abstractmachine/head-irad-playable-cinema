@@ -5,6 +5,8 @@ import io
 from pathlib import Path
 from typing import Any
 
+from tool.project_access import project_operation
+
 # Maps legacy CSV column names to the canonical temporal field names.
 # Used by normalize_shot_fields() to ensure backward-compatible reads.
 _TEMPORAL_FIELD_ALIASES: dict[str, str] = {
@@ -105,6 +107,7 @@ def get_shotlist_path(project_path: str, filename: str, media_type: str) -> Path
     return Path(project_path) / "data" / "shotlists" / media_type / f"{base_name}.csv"
 
 
+@project_operation
 def list_shotlists(project_path: str, media_type: str | None = None) -> list[dict[str, Any]]:
     """List all available shotlists with metadata.
     
@@ -157,6 +160,7 @@ def list_shotlists(project_path: str, media_type: str | None = None) -> list[dic
     return shotlists
 
 
+@project_operation
 def read_shotlist(project_path: str, filename: str, media_type: str = "movie") -> list[dict[str, Any]]:
     """Read shotlist CSV and return all shots."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
@@ -168,6 +172,7 @@ def read_shotlist(project_path: str, filename: str, media_type: str = "movie") -
         return [normalize_shot_fields(row) for row in reader]
 
 
+@project_operation
 def write_shotlist(project_path: str, filename: str, media_type: str, shots: list[dict[str, Any]], *, registry=None, approved=False) -> None:
     """Write shotlist data back to CSV."""
     shotlist_path = get_shotlist_path(project_path, filename, media_type)
@@ -238,6 +243,7 @@ def write_shotlist(project_path: str, filename: str, media_type: str, shots: lis
         resume_dirty_propagation(project_path, registry, propagation["operation_id"], approved=approved)
 
 
+@project_operation
 def annotate_shot(project_path: str, filename: str, shot_index: int, caption: str, media_type: str = "movie", *, registry=None, approved=False, expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
     """Add or update annotation for a specific shot (0-indexed)."""
     shots = read_shotlist(project_path, filename, media_type)
@@ -254,6 +260,7 @@ def annotate_shot(project_path: str, filename: str, shot_index: int, caption: st
     write_shotlist(project_path, filename, media_type, shots)
 
 
+@project_operation
 def annotate_scene(project_path: str, filename: str, scene_number: int, caption: str, media_type: str = "movie", *, registry=None, approved=False, expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
     """Add or update annotation for all shots in a scene."""
     shots = read_shotlist(project_path, filename, media_type)
@@ -289,6 +296,7 @@ def get_shot(project_path: str, filename: str, shot_index: int, media_type: str 
     return shots[shot_index]
 
 
+@project_operation
 def migrate_shotlist_fields(project_path: str, media_type: str | None = None, dry_run: bool = False) -> list[dict]:
     """Migrate all shotlist CSVs to the current canonical schema.
 

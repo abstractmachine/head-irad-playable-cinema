@@ -25,6 +25,7 @@ import subprocess
 import tempfile
 import time
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Any, Dict, List, Optional, Tuple
 import traceback
 from datetime import datetime
@@ -67,6 +68,7 @@ def _append_log(path, text: str) -> None:
         return
 
 
+@project_operation
 def find_latest_prompt(project_path: str, media_type: str = "movie", prefix: str = "") -> Optional[Path]:
     d = Path(project_path) / "prompts" / media_type / "shots"
     if not d.exists() or not d.is_dir():
@@ -83,6 +85,7 @@ def find_latest_prompt(project_path: str, media_type: str = "movie", prefix: str
     return files[0]
 
 
+@project_operation
 def load_system_prompt(project_path: str, media_type: str, prompt_file: Optional[str], prompt_text: Optional[str]) -> Tuple[str, Optional[str]]:
     """Return (prompt_text, prompt_file_path_or_None).
 
@@ -113,6 +116,7 @@ def load_system_prompt(project_path: str, media_type: str, prompt_file: Optional
     return "You are a visual annotation system. Return only valid JSON.", None
 
 
+@project_operation
 def load_user_prompt(project_path: str, media_type: str, prompt_file: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     """Return (user_prompt_text, file_path_or_None). Returns (None, None) if not found.
 
@@ -156,6 +160,7 @@ _ANNOTATION_SCHEMA: Dict[str, type] = {
 _LABEL_LIST_FIELDS: frozenset = frozenset()
 
 
+@project_operation
 def load_label_list_fields(project_path: str) -> frozenset:
     """Return the set of atomic-label field names for *project_path*.
 
@@ -1422,6 +1427,7 @@ def _build_prompt(
 # ETA helpers — used by annotate_file_shots and annotate_all_files
 # ---------------------------------------------------------------------------
 
+@project_operation
 def write_annotation_aggregate(project_path, filename, media_type, entries, *, registry=None, approved=False,
                                expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
     """Validate declared classifications before the existing atomic legacy write."""
@@ -1449,6 +1455,7 @@ def write_annotation_aggregate(project_path, filename, media_type, entries, *, r
     return path
 
 
+@project_operation
 def annotate_manual(project_path, filename, media_type, shot_ids, caption, *, registry, approved=False,
                     expected_revision=None, expected_hashes=None, operation_id=None, interrupt=None):
     from data.resource_storage import ResourceStore
@@ -1566,6 +1573,7 @@ def _migrate_legacy_shot_ids(
     return result
 
 
+@project_operation
 def migrate_annotations_to_stable_ids(
     project_path: str,
     filename: str,
@@ -1681,6 +1689,7 @@ def _count_file_pending_shots(
         return 0
 
 
+@project_operation
 def annotate_file_shots(
     project_path: str,
     filename: str,
@@ -2366,6 +2375,7 @@ def _export_annotations_markdown(results: List[Dict[str, Any]], dest: Path) -> N
                 f.write("\n")
 
 
+@project_operation
 def annotate_all_files(
     project_path: str,
     media_type: str = "movie",
@@ -2514,6 +2524,7 @@ def canonical_shot_type(annotation: dict | None) -> str:
     return UNTYPED_SHOT_TYPE
 
 
+@project_operation
 def load_shot_type_lookup(
     project_path: str,
     media_type: str,
@@ -2601,6 +2612,7 @@ def _merge_annotation_dicts(prev_ann: Dict[str, Any], removed_ann: Dict[str, Any
     return result
 
 
+@project_operation
 def reindex_annotations_for_merge(
     project_path: str,
     filename: str,
@@ -2641,6 +2653,7 @@ def reindex_annotations_for_merge(
         pass
 
 
+@project_operation
 def reindex_annotations_for_split(
     project_path: str,
     filename: str,
@@ -2680,6 +2693,7 @@ def reindex_annotations_for_split(
         pass
 
 
+@project_operation
 def remove_file_annotations(
     project_path: str,
     filename: str,

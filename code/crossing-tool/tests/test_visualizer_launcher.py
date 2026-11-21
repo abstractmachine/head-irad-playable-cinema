@@ -44,7 +44,7 @@ def test_configure_qt_platform(
 
 
 @pytest.mark.parametrize("entrypoint", ["shared", "illustration"])
-def test_platform_is_selected_before_application_creation(monkeypatch, entrypoint):
+def test_platform_is_selected_before_application_creation(monkeypatch, entrypoint, tmp_path):
     monkeypatch.setenv("XDG_SESSION_TYPE", "wayland")
     monkeypatch.setenv("XDG_CURRENT_DESKTOP", "ubuntu:GNOME")
     monkeypatch.setenv("DISPLAY", ":0")
@@ -81,7 +81,7 @@ def test_platform_is_selected_before_application_creation(monkeypatch, entrypoin
         if entrypoint == "shared":
             launcher.run_visualizer_window("project", lambda: window)
         else:
-            launcher.launch_visualizer("illustration", "/unused")
+            launcher.launch_visualizer("illustration", str(tmp_path))
 
     assert exit_info.value.code == 0
     application_class.assert_called_once_with(launcher.sys.argv)

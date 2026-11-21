@@ -64,6 +64,7 @@ import json
 import os
 import sys
 import traceback
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -91,8 +92,14 @@ from tool import prefs as _prefs
 # Project path resolution
 # ---------------------------------------------------------------------------
 
+_request_project = ContextVar("crossing_mcp_project", default=None)
+
+
 def _resolve_project_path() -> str | None:
     """Return the active project path from env var or saved user prefs."""
+    admitted = _request_project.get()
+    if admitted is not None:
+        return admitted
     env_path = os.environ.get("CROSSING_PROJECT")
     if env_path:
         return env_path
@@ -236,11 +243,36 @@ def _render_silhouette_png_bytes(png_path: str, width: int) -> "bytes | None":
 mcp = FastMCP("crossing")
 
 
+def _project_tool(**options):
+    from functools import wraps
+    from tool.project_access import MaintenanceError, operation
+
+    def register(function):
+        @wraps(function)
+        def admitted(*args, **kwargs):
+            project = _resolve_project_path()
+            if not project:
+                return function(*args, **kwargs)
+            try:
+                with operation(project) as admitted_project:
+                    token = _request_project.set(str(admitted_project))
+                    try:
+                        return function(*args, **kwargs)
+                    finally:
+                        _request_project.reset(token)
+            except MaintenanceError as error:
+                return _err("Project access refused", str(error))
+
+        return mcp.tool(**options)(admitted)
+
+    return register
+
+
 # ===========================================================================
 # TIER 1 — READ-ONLY TOOLS
 # ===========================================================================
 
-@mcp.tool()
+@_project_tool()
 def list_movies(
     media_type: str = "movie",
     compact: bool = False,
@@ -323,7 +355,7 @@ def list_movies(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def get_metadata(
     film: str,
     media_type: str = "movie",
@@ -365,7 +397,7 @@ def get_metadata(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_poster(
     film: str,
     media_type: str = "movie",
@@ -431,7 +463,7 @@ def get_poster(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def get_shotlist(
     film: str,
     media_type: str = "movie",
@@ -507,7 +539,7 @@ def get_shotlist(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def get_subtitles(
     film: str,
     media_type: str = "movie",
@@ -574,7 +606,7 @@ def get_subtitles(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def list_motifs(
     film: str,
     media_type: str = "movie",
@@ -624,7 +656,7 @@ def list_motifs(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def list_palettes(
     film: str,
     media_type: str = "movie",
@@ -691,7 +723,7 @@ def list_palettes(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def list_silhouettes(
     word: str,
     field: str = "objects",
@@ -737,7 +769,7 @@ def list_silhouettes(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def list_silhouette_candidates(
     word: str,
     field: str = "objects",
@@ -810,7 +842,7 @@ def list_silhouette_candidates(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def summarize_silhouette_catalog(
     term: str,
     field: str = "",
@@ -857,7 +889,7 @@ def summarize_silhouette_catalog(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def rank_silhouette_candidates(
     term: str,
     field: str = "",
@@ -909,7 +941,7 @@ def rank_silhouette_candidates(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def cluster_silhouette_variants(
     term: str,
     field: str = "",
@@ -959,7 +991,7 @@ def cluster_silhouette_variants(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def search_shots(
     query: str,
     films: list[str] | None = None,
@@ -1019,7 +1051,7 @@ def search_shots(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def search_vocabulary(
     field: str,
     query: str = "",
@@ -1124,7 +1156,7 @@ def _frames_to_mcp(frames: list[dict]) -> list:
     return out
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def test_image_return() -> list:
     """Minimal smoke-test: verify Claude Desktop renders an inline image from MCP.
 
@@ -1165,7 +1197,7 @@ def test_image_return() -> list:
     ]
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def test_image_png() -> list:
     """Variant of test_image_return using PNG instead of JPEG.
 
@@ -1199,7 +1231,7 @@ def test_image_png() -> list:
     ]
 
 
-@mcp.tool()
+@_project_tool()
 def debug_frame_bytes(
     film: str,
     shot_id: str,
@@ -1309,7 +1341,7 @@ def debug_frame_bytes(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_best_frame(
     film: str,
     shot_id: str,
@@ -1349,7 +1381,7 @@ def get_best_frame(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_best_frames(
     query: str,
     limit: int = 4,
@@ -1398,7 +1430,7 @@ def get_best_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_palette_frames(
     warm: bool = False,
     cold: bool = False,
@@ -1477,7 +1509,7 @@ def get_palette_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_motif_frames(
     motif: str,
     films: list[str] | None = None,
@@ -1522,7 +1554,7 @@ def get_motif_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_context_frames(
     film: str,
     shot_id: str,
@@ -1568,7 +1600,7 @@ def get_context_frames(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_best_silhouette(
     word: str,
     field: str = "objects",
@@ -1670,7 +1702,7 @@ def get_best_silhouette(
         return [_err(str(exc), traceback.format_exc())]
 
 
-@mcp.tool(structured_output=False)
+@_project_tool(structured_output=False)
 def get_silhouette_reference_packet(
     media_id: str,
     shot_id: str,
@@ -1750,7 +1782,7 @@ def get_silhouette_reference_packet(
 # TIER 2 — GENERATION TOOLS (write to outputs/ only)
 # ===========================================================================
 
-@mcp.tool()
+@_project_tool()
 def generate_flipbook(
     film: str,
     media_type: str = "movie",
@@ -1800,7 +1832,7 @@ def generate_flipbook(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def generate_mosaic(
     query: str,
     films: list[str] | None = None,
@@ -1867,7 +1899,7 @@ def generate_mosaic(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def generate_cloud(
     film: str = "",
     field: str = "",
@@ -1929,7 +1961,7 @@ def generate_cloud(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def generate_composition(
     query: str,
     films: list[str] | None = None,
@@ -2003,7 +2035,7 @@ def generate_composition(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def generate_catalog(
     films: list[str] | None = None,
     media_type: str = "movie",
@@ -2125,7 +2157,7 @@ def generate_catalog(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def generate_silhouette_booklet(
     words: list[str] | None = None,
     films: list[str] | None = None,
@@ -2351,7 +2383,7 @@ def generate_silhouette_booklet(
 # Tier 3 — Analysis tools (read-only archive analysis)
 # ===========================================================================
 
-@mcp.tool()
+@_project_tool()
 def compare_motifs(
     films: list[str] | None = None,
     mode: str = "overlap",
@@ -2394,7 +2426,7 @@ def compare_motifs(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def get_all_motifs(
     films: list[str] | None = None,
     sort: str = "frequency",
@@ -2436,7 +2468,7 @@ def get_all_motifs(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def search_palette(
     warm: bool = False,
     cold: bool = False,
@@ -2512,7 +2544,7 @@ def search_palette(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def search_cooccurrence(
     terms: list[str],
     operator: str = "AND",
@@ -2561,7 +2593,7 @@ def search_cooccurrence(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def get_shot_context(
     film: str,
     shot_id: str,
@@ -2615,7 +2647,7 @@ def get_shot_context(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def align_subtitles_to_shots(
     film: str,
     scene: int | None = None,
@@ -2654,7 +2686,7 @@ def align_subtitles_to_shots(
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def get_archive_stats(
     media_type: str = "movie",
     resource_registry: str = "",
@@ -2689,7 +2721,7 @@ def get_archive_stats(
 # Tier 4 — Audit and discovery tools
 # ===========================================================================
 
-@mcp.tool()
+@_project_tool()
 def crossing_about(media_type: str = "movie", resource_registry: str = "") -> str:
     """Return a high-level summary of what is available in this archive.
 
@@ -2777,7 +2809,7 @@ def crossing_about(media_type: str = "movie", resource_registry: str = "") -> st
         return _err(str(exc), traceback.format_exc())
 
 
-@mcp.tool()
+@_project_tool()
 def list_vocabulary_fields(media_type: str = "movie", resource_registry: str = "") -> str:
     """Return the annotation fields available in the vocabulary index.
 

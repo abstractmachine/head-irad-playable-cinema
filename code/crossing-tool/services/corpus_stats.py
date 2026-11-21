@@ -606,7 +606,7 @@ def _annotations_fingerprint(project_path: str, *, registry=None) -> str:
     return digest.hexdigest()
 
 
-def refresh_corpus_stats_cache(project_path: str, *, registry=None) -> dict[str, Any]:
+def refresh_corpus_stats_cache(project_path: str, *, registry=None, destination=None) -> dict[str, Any]:
     """Recompute corpus stats and persist them, along with a staleness fingerprint.
 
     This is the only place `get_corpus_stats()` should be called from the
@@ -629,6 +629,9 @@ def refresh_corpus_stats_cache(project_path: str, *, registry=None) -> dict[str,
         "stats": stats,
     }
     path = corpus_stats_cache_path(project_path)
+    if destination is not None:
+        from data.resource_storage import unpublished_destination
+        path = unpublished_destination(project_path, destination)
     if token != annotation_context_token(project_path, registry):
         raise ValueError("Annotation context changed while computing corpus statistics")
     path.parent.mkdir(parents=True, exist_ok=True)

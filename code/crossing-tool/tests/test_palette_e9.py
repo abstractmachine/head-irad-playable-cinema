@@ -66,6 +66,34 @@ def _pairs():
             for role in ("figure", "field", "repair", "operationalize")}
 
 
+@pytest.fixture
+def prompt_assets(tmp_path):
+    """Representative prompt contracts; never inspect a production project's assets."""
+    common = '''
+Name an alternative only when the image supports a distinct reading. Never invent one.
+OUTPUT
+{"primary": {"material": "visible material"},
+ "alternative": {"material": "another supported material", "reason": "visible evidence"}}
+Use null for alternative when no distinct reading is supported.
+'''
+    prompts = {
+        "figure": '''Read the figure as ONE coherent colour-bearing material.
+Consider the genre's convention of coding the figure's role through visible colour.
+Do not combine separate materials into a compound answer.
+''',
+        "field": '''Read the field in relation to the frozen figure.
+Do not choose whichever material maximises contrast.
+CONTRAST IS EVIDENCE, NOT A REQUIREMENT
+''',
+    }
+    result = {}
+    for role, text in prompts.items():
+        path = tmp_path / f"palette-e9-{role}-system.txt"
+        path.write_text(text + common, encoding="utf-8")
+        result[role] = path
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Figure / field separation
 # ---------------------------------------------------------------------------
@@ -317,29 +345,20 @@ class TestExperimentalBoundary:
         assert "palette_review_analysis" not in source
         assert "palette_review_stats" not in source
 
-    def test_the_figure_prompt_asset_forbids_compound_materials(self, tmp_path):
-        from pathlib import Path
-
-        text = Path("/home/cowpoke/playable/dead-crossing/prompts/palettes/"
-                    "palette-e9-figure-system-2026-09-21-v2.txt").read_text("utf-8")
+    def test_the_figure_prompt_asset_forbids_compound_materials(self, prompt_assets):
+        text = prompt_assets["figure"].read_text("utf-8")
         assert "ONE coherent colour-bearing" in text
         assert "convention of coding" in text
 
-    def test_the_alternative_is_reachable_in_the_schema(self):
+    def test_the_alternative_is_reachable_in_the_schema(self, prompt_assets):
         """v1 showed only the null case and the model returned null 90/90 times."""
-        from pathlib import Path
-
         for role in ("figure", "field"):
-            text = Path("/home/cowpoke/playable/dead-crossing/prompts/palettes/"
-                        f"palette-e9-{role}-system-2026-09-21-v2.txt").read_text("utf-8")
+            text = prompt_assets[role].read_text("utf-8")
             schema = text.split("OUTPUT", 1)[1]
             assert '"alternative": {' in schema, role
             assert "Never invent one" in text, role
 
-    def test_the_field_prompt_forbids_maximising_contrast(self):
-        from pathlib import Path
-
-        text = Path("/home/cowpoke/playable/dead-crossing/prompts/palettes/"
-                    "palette-e9-field-system-2026-09-21-v2.txt").read_text("utf-8")
+    def test_the_field_prompt_forbids_maximising_contrast(self, prompt_assets):
+        text = prompt_assets["field"].read_text("utf-8")
         assert "maximises contrast" in text
         assert "CONTRAST IS EVIDENCE, NOT A REQUIREMENT" in text

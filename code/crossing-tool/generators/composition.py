@@ -29,6 +29,7 @@ import datetime
 import random
 import re
 from pathlib import Path
+from tool.project_access import project_operation
 
 from PIL import Image
 
@@ -128,6 +129,7 @@ def choose_background(results: list[dict], seed: int | None = None) -> dict:
     return rng.choice(results)
 
 
+@project_operation
 def build_tableau(
     result: dict,
     project_path: str,

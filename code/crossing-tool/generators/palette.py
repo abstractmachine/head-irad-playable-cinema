@@ -22,6 +22,7 @@ from __future__ import annotations
 import math
 from datetime import datetime, timezone
 from pathlib import Path
+from tool.project_access import project_operation
 
 from PIL import Image, ImageDraw
 
@@ -170,6 +171,7 @@ def export_palette_pdf(
 # Movie-level entry points
 # ---------------------------------------------------------------------------
 
+@project_operation
 def generate_palette_pdf_for_movie(
     project_path: str,
     filename: str,
@@ -233,6 +235,7 @@ def generate_palette_pdf_for_movie(
     }
 
 
+@project_operation
 def generate_palette_pdf_for_all_movies(
     project_path: str,
     media_type: str = "movie",

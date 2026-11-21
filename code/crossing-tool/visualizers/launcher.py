@@ -32,6 +32,7 @@ from PyQt5.QtWidgets import QApplication, QWidget
 
 from styles import theme
 from tool.shortcuts import install_keyboard_manager
+from tool.project_access import independent_operations, project_operation
 
 # The window-raise helper is safe to import at module level.
 from visualizers._window_helpers import raise_existing_window
@@ -129,10 +130,12 @@ def run_visualizer_window(
         post_show(win)
 
     if created_app:
-        sys.exit(app.exec_())
+        with independent_operations():
+            sys.exit(app.exec_())
     return win
 
 
+@project_operation
 def launch_visualizer(
     subcommand: str,
     project_path: str,
@@ -189,7 +192,8 @@ def launch_visualizer(
 
         # CLI / standalone case: enter the event loop and exit the process
         # when it finishes to preserve the previous behaviour.
-        sys.exit(app.exec_())
+        with independent_operations():
+            sys.exit(app.exec_())
 
     # If we reached here an application is already running in this process.
     # Per the new architecture, do NOT construct another visualizer's

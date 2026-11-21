@@ -19,6 +19,7 @@ import re
 import threading
 
 from data import resource_locations as locations
+from tool.project_access import operation, project_operation
 from data.media_id import parse_instance_id, parse_shot_id, INSTANCE_REGISTRATION_POLICY
 
 
@@ -54,6 +55,7 @@ def create_storage_directory(project, path, *, exclusive=False):
         sync_directory(directory.parent)
 
 
+@project_operation
 def _registry_metadata(project, path, *, check_integrity=False):
     path = locations.project_file(project, path)
     with path.open("rb") as stream:
@@ -87,11 +89,28 @@ def relative_path(project, path):
     return relative.as_posix()
 
 
+def unpublished_destination(project, path):
+    reference = relative_path(project, path)
+    if not reference.startswith("outputs/maintenance/"):
+        raise ValueError("Unpublished destination must be below outputs/maintenance")
+    result = Path(project).resolve() / reference
+    if os.path.lexists(result):
+        raise ValueError("Unpublished destination already exists")
+    return result
+
+
 _registry_lock_state = threading.local()
 
 
 @contextmanager
 def registry_lock(project, registry, *, exclusive=False):
+    with operation(project):
+        with _registry_lock(project, registry, exclusive=exclusive):
+            yield
+
+
+@contextmanager
+def _registry_lock(project, registry, *, exclusive=False):
     path = locations.project_file(project, registry)
     held = getattr(_registry_lock_state, "held", {})
     key = (os.getpid(), str(path))
@@ -201,6 +220,7 @@ def upgrade_collection_journal(project, registry, *, approved=False):
         return {"upgraded": True}
 
 
+@project_operation
 def adopt_registry(project, proposal, destination, *, exceptions, approved=False, interrupt=None):
     """Explicit whole-snapshot adoption, never install/allocate during lookup.
 
@@ -318,6 +338,201 @@ def adopt_registry(project, proposal, destination, *, exceptions, approved=False
 
 class ResourceStore:
     """Explicit writer for an adopted registry, reusing the canonical allocator."""
+
+    def _fixture_state(self, owner):
+        from tool.project_access import _InspectionOwner
+        if not isinstance(owner, _InspectionOwner):
+            raise ValueError("Live exclusive fixture owner required")
+        state = owner.require_fixture_renames()
+        if state["project"] != str(self.project):
+            raise ValueError("Fixture import project differs")
+        return state
+
+    def import_fixture_run(self, owner, frozen, plan, *, interrupt=None):
+        """Publish the frozen historical wrapper over already relocated evidence."""
+        from data.annotate import atomic_write_text
+        from services.resource_validation import validate_generation
+        from services.frame_match import best_frame_path
+        from services.resource_rename import _rename
+        self._fixture_state(owner)
+        binding = locations.registered_instance(self.project, self.registry, plan["instance_id"])
+        source = locations.current_location(self.project, binding, "silhouettes", "")
+        payload = plan["payload"]
+        if source is None or payload["source"]["image_sha256"] != digest(source["image"]) or payload["source_instance_id"] != binding["instance_id"]:
+            raise ValueError("Historical run source identity differs")
+        findings = validate_generation(payload["generation"], plan["provider"])
+        if findings["missing"] or findings["errors"]:
+            raise ValueError("Invalid historical generation evidence")
+        annotation_path = locations.resolve_annotation(self.project, source["record"]["filename"], binding["media_type"], registry=self.registry)
+        shots = [entry["shot"] for entry in json.loads(annotation_path.read_text()) if entry.get("shot", {}).get("shot_id") == binding["shot_id"]]
+        if len(shots) != 1:
+            raise ValueError("Historical run requires one exact source shot")
+        best = shots[0].get("best_frame", {}).get("frame")
+        evidence = payload["source"].get("evidence", [])
+        for item in evidence:
+            frame = best_frame_path(str(self.project), binding["media_type"], source["record"]["filename"], binding["shot_id"])
+            if (item.get("frame") != best or item.get("media_id") != binding["media_id"]
+                    or item.get("image_sha256") != digest(locations.project_file(self.project, frame))
+                    or item.get("query_specific_frame") != source["record"]["frame"]):
+                raise ValueError("Incorrect BEST/frame evidence association")
+        wrapper = json.dumps({**payload, "artifacts": plan["artifact_hashes"]}, sort_keys=True, allow_nan=False).encode()
+        if hashlib.sha256(wrapper).hexdigest() != plan["wrapper_sha256"] or len(wrapper) != plan["wrapper_bytes"]:
+            raise ValueError("Historical wrapper differs from frozen plan")
+        target = self.project / relative_path(self.project, plan["destination"])
+        media = locations.find_media(self.project, binding["media_type"], media_id=binding["media_id"])
+        expected_target = locations.generation_run_destination(self.project, media, binding["media_type"], binding["instance_id"], source["record"]["field"], source["record"]["label"], plan["provider"], plan["proposed_number"]) / "run.json"
+        if target != expected_target:
+            raise ValueError("Historical run canonical location differs")
+        for name, old in plan["artifacts"].items():
+            locations.component(name)
+            row = frozen.execute("SELECT destination,sha256 FROM files WHERE source=? AND disposition='Move'", (old,)).fetchone()
+            if row is None or row["destination"] != relative_path(self.project, target.parent / name) or row["sha256"] != plan["artifact_hashes"][name]:
+                raise ValueError("Unapproved generation artifact association")
+            if digest(locations.project_file(self.project, row["destination"])) != row["sha256"]:
+                raise ValueError("Changed generation artifact")
+        with self.transaction() as database:
+            previous = database.execute("SELECT * FROM generation_runs WHERE instance_id=? AND provider=? AND number=?", (plan["instance_id"], plan["provider"], plan["proposed_number"])).fetchone()
+            next_number = database.execute("SELECT coalesce(max(number),0)+1 FROM generation_runs WHERE instance_id=? AND provider=?", (plan["instance_id"], plan["provider"])).fetchone()[0]
+        if previous is None:
+            if next_number != plan["require_next_reservation_number"]:
+                raise ValueError("Historical run reservation ordinal differs")
+            reservation = self.reserve_generation_run(plan["instance_id"], source["record"]["field"], source["record"]["label"], plan["provider"], plan["mode"])
+            if reservation["number"] != plan["require_next_reservation_number"]:
+                raise ValueError("Historical run reservation ordinal differs")
+            if interrupt:
+                interrupt("historical-run-reserved")
+        elif previous["state"] not in ("reserved", "complete") or previous["run_path"] != plan["destination"] or previous["mode"] != plan["mode"]:
+            raise ValueError("Conflicting historical run reservation")
+        if target.exists():
+            if digest(locations.project_file(self.project, target)) != plan["wrapper_sha256"]:
+                raise ValueError("Historical run wrapper collision")
+        else:
+            stage = self.registry.parent / (".graph-run-" + owner.operation_id + ".json")
+            if stage.exists() and digest(locations.project_file(self.project, stage)) != plan["wrapper_sha256"]:
+                raise ValueError("Historical wrapper staging collision")
+            if not stage.exists():
+                atomic_write_text(stage, wrapper.decode())
+            descriptor = os.open(stage, os.O_RDONLY | os.O_NOFOLLOW)
+            try:
+                os.fsync(descriptor)
+            finally:
+                os.close(descriptor)
+            source_parent = os.open(stage.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            target_parent = os.open(target.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            try:
+                _rename(source_parent, stage.name, target_parent, target.name)
+                os.fsync(source_parent)
+                os.fsync(target_parent)
+            finally:
+                os.close(source_parent)
+                os.close(target_parent)
+        if interrupt:
+            interrupt("historical-run-installed")
+        with self.transaction() as database:
+            row = database.execute("SELECT * FROM generation_runs WHERE instance_id=? AND provider=? AND number=?", (plan["instance_id"], plan["provider"], plan["proposed_number"])).fetchone()
+            if row["state"] != "complete":
+                database.execute("UPDATE generation_runs SET state='complete',run_sha256=?,manifest=? WHERE instance_id=? AND provider=? AND number=?",
+                                 (plan["wrapper_sha256"], json.dumps(plan["artifact_hashes"]), plan["instance_id"], plan["provider"], plan["proposed_number"]))
+            elif row["run_sha256"] != plan["wrapper_sha256"] or json.loads(row["manifest"]) != plan["artifact_hashes"]:
+                raise ValueError("Historical run commitment differs")
+
+    def import_fixture_collection(self, owner, frozen, collection):
+        """CAS relocation of an approved complete annotation collection."""
+        from services.resource_validation import validate_annotation_classifications
+        self._fixture_state(owner)
+        media_type, media_id = collection["media_type"], collection["media_id"]
+        media = locations.find_media(self.project, media_type, media_id=media_id, filename=collection["filename"])
+        artifacts = {}
+        original = json.loads(collection["artifacts"])
+        for suffix, artifact in original.items():
+            row = frozen.execute("SELECT f.*,t.after_sha256 FROM files f LEFT JOIN transformations t USING(source) WHERE f.source=?", (artifact["source"],)).fetchone()
+            if row is None or row["sha256"] != artifact["sha256"]:
+                raise ValueError("Collection member differs from frozen source")
+            path = locations.annotation_path(self.project, media["filename"], media_type, suffix, layout="media-first-v1")
+            if row["destination"] != relative_path(self.project, path):
+                raise ValueError("Collection member has incorrect canonical location")
+            expected = row["after_sha256"] if row["disposition"] == "Transform" else row["sha256"]
+            if digest(locations.project_file(self.project, path)) != expected:
+                raise ValueError("Collection content differs")
+            artifacts[suffix] = expected
+        if ".annotations.json" not in artifacts:
+            raise ValueError("Incomplete annotation collection")
+        annotation = locations.annotation_path(self.project, media["filename"], media_type, layout="media-first-v1")
+        for entry in json.loads(annotation.read_text()):
+            shot = entry["shot"]
+            shot_media, start, end = parse_shot_id(shot["shot_id"])
+            best = shot.get("best_frame", {}).get("frame")
+            if shot_media != media_id or best is not None and (type(best) is not int or not start <= best <= end):
+                raise ValueError("Incorrect source shot/BEST association")
+            if validate_annotation_classifications(shot.get("annotation", {})):
+                raise ValueError("Invalid source classification")
+        metadata = {row[0]: json.loads(row[1]) for row in frozen.execute("SELECT * FROM meta")}
+        preparation_reference = metadata["identity_registry"]
+        preparation = locations.project_file(self.project, preparation_reference)
+        if preparation == self.registry or digest(preparation) != metadata["inputs"][preparation_reference]:
+            raise ValueError("Collection import requires the unchanged preparation snapshot")
+        with sqlite3.connect(preparation.as_uri() + "?mode=ro", uri=True) as baseline:
+            baseline.row_factory = sqlite3.Row
+            previous = baseline.execute("SELECT * FROM annotation_layouts WHERE media_type=? AND media_id=?", (media_type, media_id)).fetchone()
+        expected_revision = previous["revision"] if previous else 0
+        if previous is not None and "revision" in collection.keys() and collection["revision"] != expected_revision:
+            raise ValueError("Frozen recorded collection revision differs from preparation")
+        with self.transaction() as database:
+            current = database.execute("SELECT * FROM annotation_layouts WHERE media_type=? AND media_id=?", (media_type, media_id)).fetchone()
+            if current and current["layout"] == "media-first-v1" and json.loads(current["artifacts"]) == artifacts and current["revision"] == expected_revision + 1:
+                return current["revision"]
+            if (current["revision"] if current else 0) != expected_revision:
+                raise ValueError("Collection expected revision differs")
+            if current and (current["filename"] != media["filename"] or any(original.get(suffix, {}).get("sha256") != sha for suffix, sha in json.loads(current["artifacts"]).items())):
+                raise ValueError("Previous collection commitment differs from frozen evidence")
+            database.execute("INSERT INTO annotation_layouts VALUES(?,?,?,?,?,?) ON CONFLICT(media_type,media_id) DO UPDATE SET layout=excluded.layout,revision=excluded.revision,artifacts=excluded.artifacts",
+                             (media_type, media_id, media["filename"], "media-first-v1", expected_revision + 1, json.dumps(artifacts)))
+            return expected_revision + 1
+
+    def import_fixture_pair(self, owner, frozen, instance_id, kind, mode=""):
+        """Commit a verified relocated pair without copying or legacy fallback."""
+        from services.resource_publication import _validation
+        from PIL import Image
+        state = self._fixture_state(owner)
+        schema = {"silhouettes": "silhouette-v1", "engravings": "engraving-v2"}[kind]
+        rows = frozen.execute("SELECT f.*,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND t.schema=? AND coalesce(f.mode,'')=? AND disposition='Transform'", (instance_id, schema, mode)).fetchall()
+        if len(rows) != 1:
+            raise ValueError("Missing or ambiguous frozen pair")
+        expected = rows[0]
+        metadata_path = locations.project_file(self.project, expected["destination"])
+        if digest(metadata_path) != expected["after_sha256"]:
+            raise ValueError("Installed metadata differs from approved transformation")
+        metadata = json.loads(metadata_path.read_text())
+        operation_id = "graph-" + state["operation"] + "-" + hashlib.sha256((instance_id + kind + mode).encode()).hexdigest()
+        with self.transaction() as database:
+            binding = locations.registered_instance(self.project, self.registry, instance_id)
+            validation = _validation(self, database, binding, metadata, kind, mode)
+            if validation["state"] != "valid":
+                raise ValueError("Maintenance pair validation failed: " + json.dumps(validation, default=str))
+            paths = validation["destination"]
+            image = frozen.execute("SELECT * FROM files WHERE instance_id=? AND destination=? AND disposition='Move'", (instance_id, relative_path(self.project, paths["image"]))).fetchone()
+            if image is None or metadata_path != paths["metadata"] or digest(locations.project_file(self.project, paths["image"])) != image["sha256"]:
+                raise ValueError("Frozen pair location/image association differs")
+            with Image.open(paths["image"]) as picture:
+                if picture.format != "PNG":
+                    raise ValueError("Relocated image must be PNG")
+                picture.verify()
+            previous = database.execute("SELECT * FROM resource_locations WHERE instance_id=? AND kind=? AND mode=?", (instance_id, kind, mode)).fetchone()
+            operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+            if previous:
+                if (operation is None or operation["state"] != "finished" or previous["record_sha256"] != expected["after_sha256"]
+                        or previous["image_sha256"] != image["sha256"] or previous["record_path"] != expected["destination"]):
+                    raise ValueError("Conflicting existing location/import evidence")
+                return previous["revision"]
+            details = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),
+                       "record_sha256": expected["after_sha256"], "image_sha256": image["sha256"],
+                       "expected_revision": 0, "metadata": metadata, "maintenance_operation": state["operation"]}
+            database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", (operation_id, instance_id, kind, mode, "files_published", json.dumps(details)))
+            revision = self.commit_location(database, binding, kind, mode, paths, metadata, 0, operation_id=operation_id)
+            details.pop("metadata")
+            details["metadata_evidence"] = "frozen-transform-and-record-sha256"
+            database.execute("UPDATE publication_operations SET state='finished',details=? WHERE operation_id=?", (json.dumps(details, ensure_ascii=False), operation_id))
+            return revision
 
     def __init__(self, project, registry, *, approved=False):
         if not approved:

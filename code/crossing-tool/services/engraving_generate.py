@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import string
 from pathlib import Path
+from tool.project_access import project_operation
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -179,6 +180,7 @@ def _expand_prompt(template_text: str, context: dict | None) -> str:
 # Model validation
 # ---------------------------------------------------------------------------
 
+@project_operation
 def validate_models(project_path: str) -> None:
     """Raise RuntimeError if the FLUX Kontext model directory is missing."""
     model_dir = Path(project_path) / "models" / MODEL_NAME
@@ -193,6 +195,7 @@ def validate_models(project_path: str) -> None:
 # Core generation
 # ---------------------------------------------------------------------------
 
+@project_operation
 def generate_engraving(
     *,
     project_path: str,
@@ -359,6 +362,7 @@ def get_openai_api_key(project_path: str) -> str:
     )
 
 
+@project_operation
 def generate_openai_engraving(
     *,
     project_path: str,

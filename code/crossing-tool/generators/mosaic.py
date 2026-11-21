@@ -18,6 +18,7 @@ import sys
 from dataclasses import dataclass, field
 from functools import lru_cache
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Any
 
 from PIL import Image, ImageDraw, ImageFont
@@ -438,6 +439,7 @@ def frame_from_pct(start_frame: int, end_frame: int, frame_pct: float) -> int:
     return int(start_frame + (end_frame - start_frame) * pct)
 
 
+@project_operation
 def mosaic_from_search_results(
     results: list[dict],
     project_path: str,
@@ -530,6 +532,7 @@ def mosaic_from_search_results(
 # Shots / scenes data builders  (no Qt dependency — usable from CLI and GUI)
 # ---------------------------------------------------------------------------
 
+@project_operation
 def build_shots_results(
     project_path: str,
     filename: str,
@@ -597,6 +600,7 @@ def build_shots_results(
     return results
 
 
+@project_operation
 def build_scenes_results(
     project_path: str,
     filename: str,
@@ -734,6 +738,7 @@ def build_scenes_results(
     return results
 
 
+@project_operation
 def results_to_mosaic_items(
     results: "list[dict]",
     project_path: str,
@@ -799,6 +804,7 @@ def results_to_mosaic_items(
     return items
 
 
+@project_operation
 def mosaic_pdf_from_shots(
     project_path: str,
     filename: str,
@@ -846,6 +852,7 @@ def mosaic_pdf_from_shots(
                          verbose=verbose, progress_cb=progress_cb)
 
 
+@project_operation
 def mosaic_pdf_from_scenes(
     project_path: str,
     filename: str,
@@ -936,6 +943,7 @@ def _extract_frames_for_tile(
 # Video mosaic
 # ---------------------------------------------------------------------------
 
+@project_operation
 def mosaic_video_from_search_results(
     results: "list[dict]",
     project_path: str,
@@ -1112,6 +1120,7 @@ def mosaic_video_from_search_results(
 # Per-frame JPEG exporter
 # ---------------------------------------------------------------------------
 
+@project_operation
 def export_frames_from_search_results(
     results: list[dict],
     project_path: str,

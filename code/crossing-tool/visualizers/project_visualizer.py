@@ -1138,6 +1138,15 @@ class _BackupWorker(QThread):
             self._last_phase, self._last_update = event['phase'], now
 
     def run(self):
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self.project):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.error = str(error)
+
+    def _run_admitted(self):
         from services import backup_mirror
         try:
             options = {'progress': self._progress, 'cancelled': self._cancel.is_set}
@@ -1191,6 +1200,16 @@ class _ProjectColumnsWorker(QThread):
         self.registry = registry
 
     def run(self) -> None:
+        from tool.project_access import MaintenanceError, operation
+
+        try:
+            with operation(self.project_path):
+                self._run_admitted()
+        except MaintenanceError as error:
+            self.tier_failed.emit(self.generation, "live", str(error))
+            self.tier_failed.emit(self.generation, "cached", str(error))
+
+    def _run_admitted(self) -> None:
         try:
             from services.corpus_stats import get_cached_project_columns, get_live_project_columns
         except Exception as exc:

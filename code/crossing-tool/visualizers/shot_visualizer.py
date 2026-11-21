@@ -19,6 +19,7 @@ import traceback
 import math
 import faulthandler
 from pathlib import Path
+from tool.project_access import independent_operations, project_operation
 
 # Allow imports from the tool root (data/, services/, generators/)
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -716,6 +717,7 @@ class ShotlistVisualizer(WindowVisualizer):
 
     _audio_start_signal = pyqtSignal(float, float)
 
+    @project_operation
     def __init__(self, project_path: str, filenames: list, current_index: int = 0,
                  media_type: str = "movie", verbose: bool = False, *, registry=None, approved=False):
         self._resource_registry = registry
@@ -3332,7 +3334,8 @@ def main():
     if getattr(args, 'play', False):
         QTimer.singleShot(300, visualizer.start_playback)
 
-    sys.exit(app.exec_())
+    with independent_operations():
+        sys.exit(app.exec_())
 
 
 if __name__ == "__main__":

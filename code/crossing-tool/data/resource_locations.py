@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from pathlib import Path
+from tool.project_access import project_iterator, project_operation
 
 from data.media_id import label_slug, parse_instance_id, parse_shot_id
 from data.metadata import normalize_media_type
@@ -73,6 +74,7 @@ def annotation_destination(project, record, media_type, suffix=".annotations.jso
     return root / component(Path(record["filename"]).stem + suffix)
 
 
+@project_iterator
 def annotation_collections(project, media_type, *, registry=None):
     """Enumerate exact collections without publishing or selecting transitional copies."""
     from data.metadata import load_json_metadata
@@ -106,6 +108,7 @@ def annotation_directory(project, media_type):
     return annotation_root(project) / media_type
 
 
+@project_iterator
 def annotation_files(project, media_type, suffix=".annotations.json", *, registry=None):
     for record, collection in annotation_collections(project, media_type, registry=registry):
         if suffix in collection["existing"]:
@@ -147,6 +150,7 @@ def generation_run_destination(project, record, media_type, instance_id, field, 
     return artifact_directory(project, "engravings", record, media_type, instance_id, field, label) / "runs" / provider / f"run-{number:03d}"
 
 
+@project_operation
 def project_file(project, path):
     """Confine an existing regular file; reject symlinks including ancestors."""
     root = Path(project).resolve(strict=True)
@@ -165,6 +169,7 @@ def project_file(project, path):
     return current
 
 
+@project_operation
 def registered_instance(project, registry, instance_id):
     """Read immutable v1 binding and optional v1 current-location rows.
 
@@ -208,6 +213,7 @@ def registered_instance(project, registry, instance_id):
         database.close()
 
 
+@project_operation
 def current_location(project, binding, kind, mode):
     rows = [row for row in binding["locations"] if row["kind"] == kind and row["mode"] == mode]
     if len(rows) > 1:
@@ -244,7 +250,16 @@ def current_location(project, binding, kind, mode):
 def annotation_path(project, filename, media_type, suffix=".annotations.json", *, layout=None, registry=None):
     """Existing callers default to legacy writes; new-layout reads are explicit."""
     from data.resource_locations_legacy import annotation_path as legacy_path
+    accepted = None
+    if layout is None:
+        from tool.project_access import canonical_registry
+        accepted = canonical_registry(project)
+        if accepted is not None and registry is not None and (Path(project) / registry).resolve() != accepted:
+            raise ValueError("Requested registry differs from accepted canonical context")
+        registry = accepted if registry is None else registry
     committed = committed_annotation_layout(project, filename, media_type, registry) if registry is not None else None
+    if accepted is not None and committed is None:
+        raise ValueError("Missing committed canonical annotation collection")
     if committed is not None and layout is not None and committed != layout:
         raise ValueError("Requested annotation layout differs from committed authority")
     layout = committed or layout or "legacy-v1"
@@ -255,6 +270,7 @@ def annotation_path(project, filename, media_type, suffix=".annotations.json", *
     return annotation_destination(project, find_media(project, media_type, filename=filename), media_type, suffix)
 
 
+@project_operation
 def resolve_annotation(project, filename, media_type, suffix=".annotations.json", *, layout=None, registry=None, required=True):
     """Exact read-only lookup; an explicit layout avoids treating staging as committed."""
     if registry is not None:
@@ -303,6 +319,7 @@ def committed_annotation_layout(project, filename, media_type, registry):
     return commitment["layout"] if commitment else None
 
 
+@project_operation
 def annotation_context_token(project, registry=None, media_type=None):
     """Cheap cache identity for explicit committed layouts; never inspect corpus files."""
     if registry is None:
@@ -319,6 +336,7 @@ def annotation_context_token(project, registry=None, media_type=None):
     return hashlib.sha256(json.dumps([relative_path(project, path), rows], sort_keys=True).encode()).hexdigest()
 
 
+@project_operation
 def annotation_commitment(project, filename, media_type, registry):
     """Read one registry commitment, not an inference from directory existence."""
     from data.resource_storage import registry_lock
@@ -344,6 +362,7 @@ def annotation_commitment(project, filename, media_type, registry):
         return {"layout": row[0], "filename": row[1], "revision": row[2], "artifacts": artifacts}
 
 
+@project_operation
 def annotation_artifacts(project, record, media_type, *, layout=None, registry=None, required=(".annotations.json",)):
     """Enumerate only the exact approved artifact set; never glob or merge layouts."""
     from data.resource_storage import registry_lock, relative_path, digest
@@ -353,7 +372,7 @@ def annotation_artifacts(project, record, media_type, *, layout=None, registry=N
             committed = commitment["layout"] if commitment else None
             if committed is not None and layout is not None and committed != layout:
                 raise ValueError("Requested collection differs from committed layout")
-            collection = annotation_artifacts(project, record, media_type, layout=committed or layout, required=required)
+            collection = annotation_artifacts.__wrapped__(project, record, media_type, layout=committed or layout, required=required)
             collection["commitment"] = commitment
             collection["changed"] = ([suffix for suffix, sha in commitment["artifacts"].items()
                                       if suffix not in collection["existing"] or digest(collection["existing"][suffix]) != sha]

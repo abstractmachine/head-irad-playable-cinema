@@ -42,6 +42,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from tool.project_access import project_operation
 from typing import Optional
 
 import cv2
@@ -457,6 +458,7 @@ class SAMExplorer(WindowVisualizer):
     concept segmentation on it, and inspect every mask returned.
     """
 
+    @project_operation
     def __init__(
         self,
         project_path: str,

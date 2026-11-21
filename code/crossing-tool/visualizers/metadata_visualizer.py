@@ -26,6 +26,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from tool.project_access import project_operation
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -553,6 +554,7 @@ class _BrowserItem(QWidget):
 
 
 class MetadataVisualizer(WindowVisualizer):
+    @project_operation
     def __init__(self, project_path: str, media_type: str = "movie") -> None:
         # Initialize attributes required by create_browser()/create_inspector()
         # before the WindowVisualizer constructor runs (it calls those hooks).
@@ -755,7 +757,7 @@ class MetadataVisualizer(WindowVisualizer):
         # Defer reflow & thumbnail update so layouts and splitter sizes
         # have settled; avoids initial clipping until the user drags.
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
+        QTimer.singleShot(0, self._update_active_thumbnail_preview)
 
     def _sync_inspector_scrollbar_width(self) -> None:
         return
@@ -778,6 +780,9 @@ class MetadataVisualizer(WindowVisualizer):
 
     def _active_media_type(self) -> str:
         return self._media_type_for_index(self._inspector.currentIndex())
+
+    def _update_active_thumbnail_preview(self) -> None:
+        self._update_thumbnail_preview(self._active_media_type())
 
     def _media_type_for_index(self, index: int) -> str:
         return "movie" if index == 0 else "gameplay"

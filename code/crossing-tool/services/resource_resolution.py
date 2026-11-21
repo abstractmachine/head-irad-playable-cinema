@@ -2,26 +2,35 @@
 
 from data import resource_locations as locations
 from data import resource_locations_legacy as legacy
+from tool.project_access import project_operation
 
 
 def _silhouette(project, binding, *, active_only=True):
     from services.silhouette_catalog import require_active_record
     result = locations.current_location(project, binding, "silhouettes", "")
+    if result is None:
+        from tool.project_access import canonical_registry
+        if canonical_registry(project) is not None:
+            raise ValueError("Canonical silhouette location missing; legacy fallback forbidden")
     result = result if result is not None else legacy.registered_silhouette(project, binding)
     if active_only:
         require_active_record(result["record"], source=result["metadata"], project_path=project)
     return result
 
 
-def resolve_silhouette(project, instance_id, *, registry, active_only=True):
+@project_operation
+def resolve_silhouette(project, instance_id, *, registry=None, active_only=True):
     """Resolve an active registered instance without allocation or directory search."""
     from data.resource_storage import registry_lock
+    if registry is None:
+        raise ValueError("Registered source identity requires a canonical registry")
     with registry_lock(project, registry):
         result = _silhouette(project, locations.registered_instance(project, registry, instance_id), active_only=active_only)
         result["image_bytes"] = result["image"].read_bytes()
         return result
 
 
+@project_operation
 def resolve_source_silhouette(project, source_json=None, *, registry=None, instance_id=None):
     """Shared producer source interface: exact registered identity or current legacy input."""
     from pathlib import Path
@@ -46,7 +55,8 @@ def resolve_source_silhouette(project, source_json=None, *, registry=None, insta
             "instance_id": record.get("instance_id")}
 
 
-def resolve_engraving(project, instance_id, mode="frame", *, registry, active_only=True):
+@project_operation
+def resolve_engraving(project, instance_id, mode="frame", *, registry=None, active_only=True):
     """Resolve a generated mode publication, preserving canonical source authorization."""
     if mode not in locations.MODES:
         raise ValueError("Unsupported engraving mode")
@@ -55,6 +65,10 @@ def resolve_engraving(project, instance_id, mode="frame", *, registry, active_on
         binding = locations.registered_instance(project, registry, instance_id)
         source = _silhouette(project, binding, active_only=active_only)
         result = locations.current_location(project, binding, "engravings", mode)
+        if result is None:
+            from tool.project_access import canonical_registry
+            if canonical_registry(project) is not None:
+                raise ValueError("Canonical engraving location missing; legacy fallback forbidden")
         result = result if result is not None else legacy.registered_engraving(project, binding, mode)
         if result["record"].get("status") != "generated":
             raise ValueError("Engraving is not a generated publication")
@@ -63,7 +77,8 @@ def resolve_engraving(project, instance_id, mode="frame", *, registry, active_on
         return result
 
 
-def indexed_publications(project, kind, media_type, *, registry):
+@project_operation
+def indexed_publications(project, kind, media_type, *, registry=None):
     """Materialize committed publications for an explicitly requested derived rebuild."""
     import sqlite3
     from data.resource_storage import registry_lock, relative_path
@@ -83,11 +98,15 @@ def indexed_publications(project, kind, media_type, *, registry):
     return records
 
 
+@project_operation
 def resolve_index_record(project, record):
     """Verify an indexed registered reference, never substitute an unregistered path."""
     from pathlib import Path
     registry = record.get("resource_registry")
     if registry is None:
+        from tool.project_access import canonical_registry
+        if canonical_registry(project) is not None:
+            raise ValueError("Canonical index record lacks registry provenance")
         return record
     instance_id = record["instance_id"]
     resolved = (resolve_silhouette(project, instance_id, registry=registry, active_only=False) if record["resource_kind"] == "silhouettes"
