@@ -119,6 +119,12 @@ def _capacity(root, count, path_bytes, directory_components):
 
 def _commit(database, parent, interrupt, phase):
     _event(interrupt, phase + ":before-journal-sync")
+    database.execute("CREATE TABLE IF NOT EXISTS progress_clock(started REAL NOT NULL,updated REAL NOT NULL,phase TEXT NOT NULL)")
+    now = time.time()
+    if database.execute("SELECT 1 FROM progress_clock").fetchone() is None:
+        database.execute("INSERT INTO progress_clock VALUES(?,?,?)", (now, now, phase))
+    else:
+        database.execute("UPDATE progress_clock SET updated=?,phase=?", (now, phase))
     database.commit()
     os.fsync(parent)
     _event(interrupt, phase + ":journal-synced")

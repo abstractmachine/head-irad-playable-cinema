@@ -9896,6 +9896,40 @@ def cmd_silhouette_reference(args):
     print(json.dumps(result, default=str, indent=2))
 
 
+def cmd_migration(args):
+    import sqlite3
+    from services.migration_interface import dispatch
+
+    def progress(value):
+        print(json.dumps({"progress_update": value}, default=str) if args.json else
+              " | ".join(f"{key.replace('_', ' ').title()}: {item}" for key, item in value.items()),
+              file=sys.stderr if args.json else sys.stdout, flush=True)
+
+    if args.migration_action not in ("status", "prepare"):
+        print({
+            "start": "Starting closes Crossing, moves mapped files and installs approved metadata, registry and indexes.",
+            "resume": "Resuming reconciles retained journals and continues only verified work.",
+            "rollback": "Rollback reverses verified graph changes before file moves. It never overwrites or restores automatically.",
+            "validate": "Validation checks the installed graph; it does not repair, rebuild or reopen Crossing.",
+            "accept": "Acceptance validates the graph and records your acceptance. Crossing stays closed.",
+            "release": "Release rechecks durable acceptance and reopens Crossing. This requires separate confirmation.",
+        }[args.migration_action], file=sys.stderr)
+    try:
+        result = dispatch(args, emit=progress)
+    except KeyboardInterrupt as error:
+        raise SystemExit("Migration interrupted. Recovery evidence retained. Run migration status before resume or rollback.") from error
+    except (OSError, ValueError, RuntimeError, sqlite3.Error) as error:
+        raise SystemExit("Migration stopped: " + str(error)) from error
+    if result.get("outcome") == "restore-required":
+        raise SystemExit("Migration stopped for manual review: " + result.get("reason", "Recovery evidence is incomplete") +
+                         ". No restoration performed. Preserve journals and run migration status.")
+    if args.json:
+        print(json.dumps(result, indent=2, default=str))
+    else:
+        for field, value in result.items():
+            print(f"{field.replace('_', ' ').title():<20} | {value}")
+
+
 def build_parser():
     parser = _HelpfulParser(
         prog="crossing",
@@ -9917,6 +9951,7 @@ def build_parser():
         help="Manage content: videos, subtitles, posters, and thumbnails",
     )
     p_meta = sub.add_parser("metadata", help="Manage media metadata")
+    p_migration = sub.add_parser("migration", help="Inspect and operate the frozen media-first migration (production execution disabled)")
     p_search = sub.add_parser(
         "search",
         help="Search shot annotations",
@@ -9941,6 +9976,30 @@ def build_parser():
         "visualizer",
         help="Open a visualizer GUI (project, shotlist, mosaic, cloud, illustration, sync)",
     )
+
+    from services.migration_interface import PLAN, PLAN_DIGEST
+
+    migration_sub = p_migration.add_subparsers(dest="migration_action", required=True)
+    for action in ("status", "prepare", "start", "resume", "rollback", "validate", "accept", "release"):
+        command = migration_sub.add_parser(action, help={
+            "status": "Read durable migration state without changing files",
+            "prepare": "Check bounded readiness without entering maintenance",
+            "start": "Close Crossing and install the approved layout",
+            "resume": "Reconcile journals and continue an interrupted installation",
+            "rollback": "Reverse only verified changes; never restore automatically",
+            "validate": "Check the installed graph without rebuilding",
+            "accept": "Record human acceptance after canonical validation",
+            "release": "Separately confirm reopening after durable acceptance",
+        }[action])
+        command.add_argument("--project", required=True, metavar="PATH")
+        command.add_argument("--plan", default=PLAN, metavar="PATH")
+        command.add_argument("--plan-sha256", default=PLAN_DIGEST)
+        command.add_argument("--operation-id", default="media-first-stage-2b3d")
+        command.add_argument("--json", action="store_true", help="Print structured results")
+        if action not in ("status", "prepare"):
+            command.add_argument("--confirm", action="store_true", help="Explicitly confirm this action after reviewing its effects")
+            command.add_argument("--clients-stopped", action="store_true", help="Confirm all Crossing windows and project-writing jobs are stopped")
+        command.set_defaults(func=cmd_migration)
 
     silhouette_sub = p_silhouette.add_subparsers(dest="silhouette_subcommand", required=True)
     p_archive = silhouette_sub.add_parser("archive", help="Plan or explicitly execute journaled superseded archival")
@@ -13115,7 +13174,8 @@ def main():
 
     try:
         with ExitStack() as leases:
-            for project in (prefs.get("path"), os.environ.get("CROSSING_PROJECT")):
+            projects = () if len(sys.argv) > 1 and sys.argv[1] == "migration" else (prefs.get("path"), os.environ.get("CROSSING_PROJECT"))
+            for project in projects:
                 if project:
                     leases.enter_context(operation(project))
             _main_with_project_access(leases)
@@ -13142,7 +13202,7 @@ def _main_with_project_access(leases):
         if hasattr(args, "scope"):
             args.scope = list(args.scope or []) + [u for u in unknown if not u.startswith("-")]
     explicit_project = getattr(args, "project", None) or getattr(args, "project_path", None)
-    if explicit_project:
+    if explicit_project and getattr(args, "command", None) != "migration":
         leases.enter_context(operation(explicit_project))
     args.func(args)
 

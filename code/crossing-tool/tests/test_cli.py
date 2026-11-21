@@ -11,7 +11,7 @@ import cli
 def test_top_level_help_lists_commands_alphabetically(capsys):
     commands = [
         "annotate", "backup", "book", "engraving", "generate", "index",
-        "media", "metadata", "search", "shotlist", "silhouette", "subtitles",
+        "media", "metadata", "migration", "search", "shotlist", "silhouette", "subtitles",
         "sync", "tool", "visualizer",
     ]
     parser = cli.build_parser()

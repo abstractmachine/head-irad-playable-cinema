@@ -177,6 +177,13 @@ def _handoff(owner, plan, checksum, revision, clients_stopped, *, verify_resourc
 
 def _commit(database, parent, interrupt, phase):
     renames._event(interrupt, phase + ":before-sync")
+    import time
+    database.execute("CREATE TABLE IF NOT EXISTS progress_clock(started REAL NOT NULL,updated REAL NOT NULL,phase TEXT NOT NULL)")
+    now = time.time()
+    if database.execute("SELECT 1 FROM progress_clock").fetchone() is None:
+        database.execute("INSERT INTO progress_clock VALUES(?,?,?)", (now, now, phase))
+    else:
+        database.execute("UPDATE progress_clock SET updated=?,phase=?", (now, phase))
     database.commit()
     descriptor = os.open(parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:

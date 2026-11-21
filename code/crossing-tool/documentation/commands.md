@@ -1,5 +1,26 @@
 # Commands
 
+## Frozen Media-First Migration
+
+`crossing migration status --project /absolute/project` reads maintenance state,
+the integrated commitment, durable journal counters and recovery guidance.
+`crossing migration prepare --project /absolute/project` authenticates the fixed
+plan and identity allocation, checks available storage and the bounded recovery
+evidence, without entering maintenance or traversing backup payloads.
+
+The other actions are `start`, `resume`, `rollback`, `validate`, `accept`, and
+`release`. Each requires `--confirm --clients-stopped`. Installation, human
+acceptance and reopening are separate actions. Validation never rebuilds to pass;
+rollback never overwrites unexpected bytes or restores a backup automatically.
+`--plan`, `--plan-sha256` and `--operation-id` must remain consistent on recovery.
+
+**Production execution remains disabled.** Readiness output and confirmation flags
+do not grant production authority. Mutation qualification uses only allocated
+temporary projects and the existing maintenance/rename/graph/integration owners.
+There is no enablement, force or unsafe flag. `--json` sends one final JSON result
+to stdout; effect notices and periodic JSON progress records go to stderr. A
+recovery conflict exits unsuccessfully and retains evidence for manual review.
+
 ## Explicit Resource Context
 
 `--resource-registry PATH` selects an already committed project-local registry for

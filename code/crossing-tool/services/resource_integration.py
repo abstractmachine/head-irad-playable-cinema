@@ -41,6 +41,10 @@ def _load(owner, binding):
                 raise ValueError("Missing integrated evidence beside existing rename journal")
             return {**binding, "phase": "maintenance", "state": "incomplete"}
         record = access._read(control, RECEIPT)
+    return _validate_record(record, binding)
+
+
+def _validate_record(record, binding):
     if any(record.get(key) != value for key, value in binding.items()):
         raise ValueError("Integrated commitment binding differs")
     if record.get("state") not in ("incomplete", "failed", "recoverable", "accepted", "released", "rolled-back", "restore-required"):
