@@ -1200,14 +1200,19 @@ class _ProjectColumnsWorker(QThread):
         self.registry = registry
 
     def run(self) -> None:
-        from tool.project_access import MaintenanceError, operation
+        from tool.project_access import operation
 
+        if not self.project_path:
+            self.tier_failed.emit(self.generation, "live", "No project selected")
+            self.tier_failed.emit(self.generation, "cached", "No project selected")
+            return
         try:
             with operation(self.project_path):
                 self._run_admitted()
-        except MaintenanceError as error:
-            self.tier_failed.emit(self.generation, "live", str(error))
-            self.tier_failed.emit(self.generation, "cached", str(error))
+        except Exception as error:
+            message = f"{type(error).__name__}: {error}"
+            self.tier_failed.emit(self.generation, "live", message)
+            self.tier_failed.emit(self.generation, "cached", message)
 
     def _run_admitted(self) -> None:
         try:
@@ -1222,6 +1227,8 @@ class _ProjectColumnsWorker(QThread):
             ("live", get_live_project_columns),
             ("cached", get_cached_project_columns),
         ):
+            if self.isInterruptionRequested():
+                return
             try:
                 columns = getter(self.project_path, **({"registry": self.registry} if self.registry is not None and tier == "cached" else {}))
             except Exception as exc:
@@ -2464,7 +2471,8 @@ class ProjectVisualizer(WindowVisualizer):
         if self._project_columns_worker is not None and self._project_columns_worker.isRunning():
             self._project_columns_worker.tier_ready.disconnect(self._on_columns_tier_ready)
             self._project_columns_worker.tier_failed.disconnect(self._on_columns_tier_failed)
-            self._project_columns_worker.wait(3000)
+            self._project_columns_worker.requestInterruption()
+            self._project_columns_worker.wait()
 
         for col_id, widget in self._project_column_widgets.items():
             loading = ProjectColumn(
@@ -2477,7 +2485,7 @@ class ProjectVisualizer(WindowVisualizer):
 
         self._project_load_generation += 1
         generation = self._project_load_generation
-        worker = _ProjectColumnsWorker(_prefs.get("path"), generation, registry=self._resource_registry)
+        worker = _ProjectColumnsWorker(_prefs.get("path"), generation, parent=self, registry=self._resource_registry)
         worker.tier_ready.connect(self._on_columns_tier_ready)
         worker.tier_failed.connect(self._on_columns_tier_failed)
         self._project_columns_worker = worker

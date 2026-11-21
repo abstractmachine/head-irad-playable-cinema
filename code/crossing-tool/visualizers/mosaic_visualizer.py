@@ -1324,9 +1324,6 @@ class MosaicVisualizer(WindowVisualizer):
             self._on_field_changed()
 
     def closeEvent(self, event) -> None:  # noqa: N802
-        # Workers read compact SQLite facets and cannot be force-cancelled
-        # safely. Invalidate their captured request IDs so late results cannot
-        # repopulate controls after this window has closed.
         self._vocab_request_id += 1
         self._shot_type_request_id += 1
         self._shot_type_facet_request_id += 1
@@ -2244,8 +2241,9 @@ class MosaicVisualizer(WindowVisualizer):
         )
         self._vocab_worker.finished.connect(self._vocab_worker.deleteLater)
         worker = self._vocab_worker
-        QTimer.singleShot(
-            0,
+        from visualizers.components.deferred import defer_callback
+        defer_callback(
+            self,
             lambda: self._start_queued_vocabulary_worker(request_id, worker),
         )
 

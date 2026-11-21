@@ -847,11 +847,7 @@ class LiveVideoWidget(QLabel):
     def stop(self) -> None:
         if self._thread is not None:
             self._thread.request_stop()
-            # Daemon thread: the process exits cleanly even if cap.read() is
-            # still blocking.  Give it up to 3 s to finish voluntarily so the
-            # V4L2 device is released before the widget is torn down, but do
-            # not block indefinitely.
-            self._thread.wait(3000)
+            self._thread.wait()
             self._thread = None
 
 
@@ -4984,6 +4980,8 @@ class SyncVisualizerWindow(WindowVisualizer):
 
     def closeEvent(self, event) -> None:
         self._save_state()
+        for video in self._workspace.findChildren(LiveVideoWidget):
+            video.stop()
         _cleanup_audio_loopbacks()
         super().closeEvent(event)
 

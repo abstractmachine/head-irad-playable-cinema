@@ -885,7 +885,7 @@ def test_get_illustration_stats_no_project_path_is_unavailable():
 # Renderer: visualizers/project_visualizer.py
 # ---------------------------------------------------------------------------
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def app():
     instance = QApplication.instance()
     if instance is None:
@@ -894,7 +894,7 @@ def app():
 
 
 @pytest.fixture
-def fake_prefs(monkeypatch, app, tmp_path):
+def fake_prefs(monkeypatch, app, tmp_path, request):
     import visualizers.project_visualizer as project_visualizer
 
     existing = set(app.topLevelWidgets())
@@ -905,7 +905,9 @@ def fake_prefs(monkeypatch, app, tmp_path):
     write_error_log = project_visualizer._write_error_log
     monkeypatch.setattr(
         project_visualizer, "_write_error_log",
-        lambda project, *args: write_error_log(project, *args) if str(project) == str(tmp_path) else None,
+        lambda project, *args: write_error_log(project, *args)
+        if request.node.name == "test_index_failure_writes_log_and_opens_it_without_a_dialog"
+        and str(project) == str(tmp_path) else None,
     )
     yield store
     for window in set(app.topLevelWidgets()) - existing:
@@ -3871,6 +3873,45 @@ def test_project_visualizer_show_hide_does_not_restart_loaded_initial_load(tmp_p
         window.close()
         window.deleteLater()
         app.processEvents()
+
+
+@pytest.mark.parametrize("project_path", [None, ""])
+def test_project_columns_worker_reports_unselected_project(project_path, app, monkeypatch):
+    from visualizers.project_visualizer import _ProjectColumnsWorker
+
+    monkeypatch.setattr(
+        corpus_stats_mod, "get_live_project_columns",
+        lambda *_args: pytest.fail("unselected project must not be read"),
+    )
+    results = []
+    worker = _ProjectColumnsWorker(project_path, generation=23)
+    worker.tier_failed.connect(lambda *values: results.append(values))
+    worker.start()
+    assert worker.wait(1000)
+    app.processEvents()
+    assert results == [
+        (23, "live", "No project selected"),
+        (23, "cached", "No project selected"),
+    ]
+
+
+def test_project_columns_worker_reports_unexpected_entry_error(tmp_path, app, monkeypatch):
+    from visualizers.project_visualizer import _ProjectColumnsWorker
+
+    def fail_entry(_project):
+        raise TypeError("invalid entry context")
+
+    monkeypatch.setattr("tool.project_access.operation", fail_entry)
+    results = []
+    worker = _ProjectColumnsWorker(str(tmp_path), generation=24)
+    worker.tier_failed.connect(lambda *values: results.append(values))
+    worker.start()
+    assert worker.wait(1000)
+    app.processEvents()
+    assert results == [
+        (24, "live", "TypeError: invalid entry context"),
+        (24, "cached", "TypeError: invalid entry context"),
+    ]
 
 
 def test_project_columns_worker_emits_generation_with_both_tiers(tmp_path, app, monkeypatch):

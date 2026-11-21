@@ -35,6 +35,7 @@ from styles.theme import JumpScrollBar
 from tool import prefs as _prefs
 from visualizers.window_visualizer import WindowVisualizer
 from visualizers.components.collapsible_section import CollapsibleSection
+from visualizers.components.deferred import defer_callback
 from visualizers.components.inspector import Inspector
 from visualizers.components.tab_panel import TabPanel
 from visualizers.components.metadata_block import MetadataBlock
@@ -741,8 +742,8 @@ class MetadataVisualizer(WindowVisualizer):
         self._movie_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons("movie"))
         self._gameplay_page._zoom_manager.zoomChanged.connect(lambda _z: self._update_zoom_buttons("gameplay"))
         # Initial button state
-        QTimer.singleShot(0, lambda: self._update_zoom_buttons("movie"))
-        QTimer.singleShot(0, lambda: self._update_zoom_buttons("gameplay"))
+        defer_callback(self, lambda: self._update_zoom_buttons("movie"))
+        defer_callback(self, lambda: self._update_zoom_buttons("gameplay"))
         return self._browser_stack
 
     def _fit_splitter_width(self) -> None:
@@ -792,7 +793,7 @@ class MetadataVisualizer(WindowVisualizer):
 
     def _change_zoom(self, media_type: str, delta: float) -> None:
         self._page_for(media_type)._change_zoom(delta)
-        QTimer.singleShot(0, lambda: self._update_zoom_buttons(media_type))
+        defer_callback(self, lambda: self._update_zoom_buttons(media_type))
 
     def _update_zoom_buttons(self, media_type: str) -> None:
         """Enable/disable *media_type*'s zoom buttons based on its page's limits."""
@@ -882,7 +883,7 @@ class MetadataVisualizer(WindowVisualizer):
             self._inspector_hidden = False
             self._inspector_auto_collapsed = False
             QTimer.singleShot(0, self._request_browser_reflow)
-            QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
+            QTimer.singleShot(0, self._update_active_thumbnail_preview)
             return
 
         self._saved_splitter_sizes = self._splitter.sizes()
@@ -893,7 +894,7 @@ class MetadataVisualizer(WindowVisualizer):
         self._inspector_hidden = True
         self._inspector_auto_collapsed = False
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
+        QTimer.singleShot(0, self._update_active_thumbnail_preview)
 
     def _toggle_fullscreen(self) -> None:
         if self.isFullScreen():
@@ -901,7 +902,7 @@ class MetadataVisualizer(WindowVisualizer):
         else:
             self.showFullScreen()
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
+        QTimer.singleShot(0, self._update_active_thumbnail_preview)
 
     def _on_page_selection_changed(self, media_type: str, record: object) -> None:
         self._selected_records[media_type] = record if isinstance(record, dict) else None
@@ -922,12 +923,12 @@ class MetadataVisualizer(WindowVisualizer):
     def resizeEvent(self, event) -> None:  # noqa: N802
         super().resizeEvent(event)
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
+        QTimer.singleShot(0, self._update_active_thumbnail_preview)
 
     def showEvent(self, event) -> None:  # noqa: N802
         super().showEvent(event)
         QTimer.singleShot(0, self._request_browser_reflow)
-        QTimer.singleShot(0, lambda: self._update_thumbnail_preview(self._active_media_type()))
+        QTimer.singleShot(0, self._update_active_thumbnail_preview)
 
     def _show_record(self, media_type: str, record: dict | None) -> None:
         info_block = self._info_blocks[media_type]

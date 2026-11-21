@@ -86,6 +86,7 @@ from visualizers.components.illustration_source import IllustrationSource
 from visualizers.components.thumbnail_cell import ThumbnailCell
 from visualizers.components.thumbnail_loader import ThumbnailLoader
 from visualizers.components.combo_popup import attach_combo_popup
+from visualizers.components.deferred import defer_callback
 from visualizers.components.sweep_bar import SweepBar
 
 
@@ -1082,8 +1083,8 @@ class IllustrationBrowser(QWidget):
                     break
             if field is not None or letter is not None or keyword is not None:
                 _f, _l, _kw = field, letter, keyword
-                QTimer.singleShot(250, lambda: self.navigate_to_filters(
-                    field=_f, letter=_l, keyword=_kw))
+                defer_callback(self, lambda: self.navigate_to_filters(
+                    field=_f, letter=_l, keyword=_kw), 250)
             return
 
         if field is not None:
@@ -1099,16 +1100,16 @@ class IllustrationBrowser(QWidget):
                 # catalog worker has populated Field. Retry only during that
                 # transient unavailable state; an absent field remains a
                 # harmless no-op once the cascade is ready.
-                QTimer.singleShot(
-                    50, lambda: self.navigate_to_filters(
+                defer_callback(
+                    self, lambda: self.navigate_to_filters(
                         field=field, letter=letter, keyword=keyword,
-                    )
+                    ), 50,
                 )
                 return
             if letter is not None or keyword is not None:
                 _l, _kw = letter, keyword
-                QTimer.singleShot(250, lambda: self.navigate_to_filters(
-                    letter=_l, keyword=_kw))
+                defer_callback(self, lambda: self.navigate_to_filters(
+                    letter=_l, keyword=_kw), 250)
             return
 
         if letter is not None:
@@ -1118,7 +1119,7 @@ class IllustrationBrowser(QWidget):
                     break
             if keyword is not None:
                 _kw = keyword
-                QTimer.singleShot(250, lambda: self.navigate_to_filters(keyword=_kw))
+                defer_callback(self, lambda: self.navigate_to_filters(keyword=_kw), 250)
             return
 
         if keyword is not None:
@@ -1131,8 +1132,8 @@ class IllustrationBrowser(QWidget):
                 or self._keyword_population_timer.isActive()
                 or not self._keyword_combo.isEnabled()
             ):
-                QTimer.singleShot(
-                    50, lambda: self.navigate_to_filters(keyword=keyword)
+                defer_callback(
+                    self, lambda: self.navigate_to_filters(keyword=keyword), 50,
                 )
 
     def reset_filters(self) -> None:
@@ -1606,7 +1607,7 @@ class IllustrationBrowser(QWidget):
             f"Title combo populated titles={self._item_combo.count() - 1}",
             phase_start,
         )
-        QTimer.singleShot(0, lambda: self._rebuild_field_combo() if self._cascade_id == _cid else None)
+        defer_callback(self, lambda: self._rebuild_field_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_field_combo(self) -> None:
         """Rebuild the Field combo for the current item scope."""
@@ -1647,7 +1648,7 @@ class IllustrationBrowser(QWidget):
             f"Field combo populated fields={self._field_combo.count() - 1}",
             phase_start,
         )
-        QTimer.singleShot(0, lambda: self._rebuild_letter_combo() if self._cascade_id == _cid else None)
+        defer_callback(self, lambda: self._rebuild_letter_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_letter_combo(self) -> None:
         """Rebuild the Letter combo for the current item+field scope."""
@@ -1686,7 +1687,7 @@ class IllustrationBrowser(QWidget):
             f"Letter combo populated letters={self._letter_combo.count() - 1}",
             phase_start,
         )
-        QTimer.singleShot(0, lambda: self._rebuild_keyword_combo() if self._cascade_id == _cid else None)
+        defer_callback(self, lambda: self._rebuild_keyword_combo() if self._cascade_id == _cid else None)
 
     def _rebuild_keyword_combo(self) -> None:
         """Rebuild the Keyword combo for the current item+field+letter scope."""
@@ -1838,7 +1839,7 @@ class IllustrationBrowser(QWidget):
         self.keywordChanged.emit(kw_data if (kw_data and kw_data != ALL) else "")
         # Defer the grid rebuild one final tick so the UI reflects the updated
         # combo state and status bar before the (potentially slow) cell creation.
-        QTimer.singleShot(0, lambda: self._rebuild_grid() if self._cascade_id == _cid else None)
+        defer_callback(self, lambda: self._rebuild_grid() if self._cascade_id == _cid else None)
 
     # ------------------------------------------------------------------ grid
 

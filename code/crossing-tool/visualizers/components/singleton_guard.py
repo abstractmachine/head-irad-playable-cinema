@@ -122,5 +122,6 @@ def claim_or_ping_and_bind(subcommand: str, project_path: str, app) -> bool:
 
     from visualizers._window_helpers import raise_existing_window
     guard.raise_requested.connect(lambda: raise_existing_window(subcommand))
+    app.aboutToQuit.connect(guard.shutdown)
     guards[subcommand] = guard
     return True

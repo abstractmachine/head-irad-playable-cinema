@@ -44,7 +44,7 @@ class ThumbnailManager(QObject):
             return
 
         self._apply_cb = apply_callback
-        self._loader = ThumbnailLoader(records, size, path_for=path_for, parent=self._parent)
+        self._loader = ThumbnailLoader(records, size, path_for=path_for, parent=self)
         self._loader.thumbReady.connect(self._on_thumb_ready)
         self._loader.start()
 
@@ -52,21 +52,20 @@ class ThumbnailManager(QObject):
         """Stop and release the current loader (if any)."""
         if self._loader is None:
             return
+        self._apply_cb = None
         try:
             self._loader.thumbReady.disconnect(self._on_thumb_ready)
-        except Exception:
+        except (TypeError, RuntimeError):
             pass
-        try:
-            if self._loader.isRunning():
-                self._loader.cancel()
-                self._loader.wait(300)
-        except Exception:
-            pass
+        self._loader.cancel()
+        self._loader.wait()
+        self._loader.deleteLater()
         self._loader = None
-        self._apply_cb = None
 
     def _on_thumb_ready(self, index: int, qimg: QImage) -> None:
         """Internal slot: forward the delivered QImage to the callback."""
+        if self.sender() is not self._loader:
+            return
         try:
             if self._apply_cb is not None:
                 self._apply_cb(index, qimg)

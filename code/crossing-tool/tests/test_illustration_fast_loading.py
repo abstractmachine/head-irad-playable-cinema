@@ -624,8 +624,9 @@ def test_keyword_navigation_retries_until_async_population_finishes(app, tmp_pat
     retries = []
 
     with patch(
-        "visualizers.components.illustration_browser.QTimer.singleShot",
-        side_effect=lambda delay, callback: retries.append((delay, callback)),
+        "visualizers.components.illustration_browser.defer_callback",
+        side_effect=lambda owner, callback, delay=0: retries.append((delay, callback))
+        if owner is browser else pytest.fail("retry must belong to its browser"),
     ):
         browser.navigate_to_filters(keyword="horse")
 
@@ -648,8 +649,9 @@ def test_field_navigation_retries_until_initial_catalog_population_finishes(app,
     retries = []
 
     with patch(
-        "visualizers.components.illustration_browser.QTimer.singleShot",
-        side_effect=lambda delay, callback: retries.append((delay, callback)),
+        "visualizers.components.illustration_browser.defer_callback",
+        side_effect=lambda owner, callback, delay=0: retries.append((delay, callback))
+        if owner is browser else pytest.fail("retry must belong to its browser"),
     ):
         browser.navigate_to_filters(field="wearing")
 
@@ -674,8 +676,9 @@ def test_field_navigation_retries_while_later_index_reload_is_loading(app, tmp_p
     retries = []
 
     with patch(
-        "visualizers.components.illustration_browser.QTimer.singleShot",
-        side_effect=lambda delay, callback: retries.append((delay, callback)),
+        "visualizers.components.illustration_browser.defer_callback",
+        side_effect=lambda owner, callback, delay=0: retries.append((delay, callback))
+        if owner is browser else pytest.fail("retry must belong to its browser"),
     ):
         browser.navigate_to_filters(field="wearing")
 

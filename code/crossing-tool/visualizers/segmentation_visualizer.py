@@ -507,12 +507,6 @@ class SAMExplorer(WindowVisualizer):
 
         self._load_films()
 
-    def closeEvent(self, event) -> None:
-        if self._seg_worker and self._seg_worker.isRunning():
-            self._seg_worker.terminate()
-            self._seg_worker.wait(2000)
-        super().closeEvent(event)
-
     # ------------------------------------------------------------------
     # UI construction
 

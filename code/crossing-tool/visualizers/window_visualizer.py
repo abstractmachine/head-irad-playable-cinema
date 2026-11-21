@@ -39,7 +39,8 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PyQt5.QtCore import Qt, QEvent, QTimer
+from PyQt5 import sip
+from PyQt5.QtCore import Qt, QEvent, QObject, QThread, QTimer
 from PyQt5.QtWidgets import (
     QWidget, QHBoxLayout, QSizePolicy, QMainWindow,
 )
@@ -311,7 +312,27 @@ class WindowVisualizer(VisualizerWindow):
         self._normal_geometry = geo
 
     # Geometry -------------------------------------------------------
+    def _stop_owned_workers(self) -> bool:
+        workers = set(self.findChildren(QThread))
+        for owner in (self, *self.findChildren(QObject)):
+            workers.update(value for value in tuple(vars(owner).values()) if isinstance(value, QThread))
+        workers = [worker for worker in workers if not sip.isdeleted(worker)]
+        for worker in workers:
+            worker.requestInterruption()
+            for method_name in ("cancel", "stop"):
+                method = getattr(worker, method_name, None)
+                if callable(method):
+                    method()
+            worker.quit()
+        for worker in workers:
+            if not worker.wait():
+                return False
+        return True
+
     def closeEvent(self, event) -> None:
+        if not self._stop_owned_workers():
+            event.ignore()
+            return
         if self._pref_key:
             normal_geometry = None
             if self.isFullScreen() and self._normal_geometry is not None:

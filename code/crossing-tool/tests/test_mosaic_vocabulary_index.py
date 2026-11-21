@@ -2,6 +2,8 @@ import json
 import subprocess
 
 import pytest
+from PyQt5 import sip
+from PyQt5.QtCore import QCoreApplication, QEvent
 from PyQt5.QtWidgets import QApplication
 
 from data.media_id import build_shot_id
@@ -25,7 +27,7 @@ from visualizers.mosaic_visualizer import (
 )
 
 
-@pytest.fixture(scope="module")
+@pytest.fixture(scope="session")
 def app():
     instance = QApplication.instance()
     if instance is None:
@@ -34,11 +36,65 @@ def app():
 
 
 @pytest.fixture
-def fake_prefs(monkeypatch):
+def fake_prefs(monkeypatch, app):
+    existing = set(app.topLevelWidgets())
     store = {}
     monkeypatch.setattr("tool.prefs.get", lambda key, default=None: store.get(key, default))
     monkeypatch.setattr("tool.prefs.set", lambda key, value: store.__setitem__(key, value))
-    return store
+    yield store
+    for window in set(app.topLevelWidgets()) - existing:
+        if not sip.isdeleted(window):
+            window.close()
+            window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+
+
+def test_mosaic_close_joins_superseded_child_workers(tmp_path, app, fake_prefs):
+    from threading import Event
+    from PyQt5.QtCore import QThread
+
+    class PendingWorker(QThread):
+        def __init__(self, parent):
+            super().__init__(parent)
+            self.started_work = Event()
+
+        def run(self):
+            self.started_work.set()
+            while not self.isInterruptionRequested():
+                self.msleep(1)
+
+    window = MosaicVisualizer(str(tmp_path))
+    workers = [PendingWorker(window), PendingWorker(window)]
+    window._shot_type_worker = workers[-1]
+    try:
+        for worker in workers:
+            worker.start()
+            assert worker.started_work.wait(1)
+        window.close()
+        assert all(not worker.isRunning() for worker in workers)
+    finally:
+        for worker in workers:
+            worker.requestInterruption()
+        for worker in workers:
+            assert worker.wait(1000)
+        window.close()
+        window.deleteLater()
+        app.processEvents()
+
+
+def test_mosaic_pending_vocabulary_start_is_cancelled_on_destruction(
+    tmp_path, app, fake_prefs, monkeypatch,
+):
+    started = []
+    monkeypatch.setattr(VocabularyWorker, "start", lambda worker: started.append(worker))
+    window = MosaicVisualizer(str(tmp_path))
+    window._start_vocabulary_load()
+    window.close()
+    window.deleteLater()
+    QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)
+    assert sip.isdeleted(window)
+    app.processEvents()
+    assert started == []
 
 
 def _write_annotations(project_path, values):

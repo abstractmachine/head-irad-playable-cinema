@@ -67,6 +67,11 @@ class IpcServer(QThread):
         """Signal the server to stop accepting connections.  Non-blocking."""
         self._running = False
 
+    def shutdown(self) -> None:
+        """Stop and join before the owning application destroys this thread."""
+        self.stop()
+        self.wait()
+
     # ------------------------------------------------------------------ subclass API
 
     def _handle_message(self, msg: dict) -> None:
@@ -92,7 +97,7 @@ class IpcServer(QThread):
         try:
             srv.bind(str(self._socket_path))
             srv.listen(5)
-            srv.settimeout(1.0)
+            srv.settimeout(0.1)
 
             while self._running:
                 try:
@@ -101,14 +106,19 @@ class IpcServer(QThread):
                     continue
 
                 try:
+                    conn.settimeout(0.1)
                     data = b""
-                    while True:
-                        chunk = conn.recv(4096)
+                    while self._running:
+                        try:
+                            chunk = conn.recv(4096)
+                        except _socket.timeout:
+                            continue
                         if not chunk:
                             break
                         data += chunk
-                    msg = json.loads(data.decode())
-                    self._handle_message(msg)
+                    if self._running and data:
+                        msg = json.loads(data.decode())
+                        self._handle_message(msg)
                 except Exception:
                     pass
                 finally:
