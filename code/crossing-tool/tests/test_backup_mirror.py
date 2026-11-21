@@ -331,6 +331,51 @@ def test_full_verification_progress_and_cooperative_cancel(cli_mirror):
         mirror.restore_verification(project, destination, full=True, cancelled=lambda: True)
 
 
+def test_status_accepts_only_exfat_historical_root_inode(cli_mirror, monkeypatch):
+    project, destination, mount = cli_mirror
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    original_context = mirror.destination_context
+
+    def remounted(*args, **kwargs):
+        context = original_context(*args, **kwargs)
+        return {**context, 'destination_inode': context['destination_inode'] + 1}
+
+    monkeypatch.setattr(mirror, 'destination_context', remounted)
+    status = mirror.backup_status(project, destination)
+    assert status['last_mirror'] is not None
+    assert status['historical_root_inode_changed'] is True
+    assert status['last_full_verify'] is None
+
+
+@pytest.mark.parametrize('changed', ['ext4', 'filesystem', 'device', 'uuid', 'mountpoint', 'destination', 'project'])
+def test_status_inode_exception_preserves_stable_identity(cli_mirror, monkeypatch, changed):
+    project, destination, mount = cli_mirror
+    if changed == 'ext4':
+        mount['fstype'] = 'ext4'
+    mirror.execute_preview(project, destination, mirror.prepare_mirror(project, destination))
+    original_context = mirror.destination_context
+
+    def remounted(*args, **kwargs):
+        context = original_context(*args, **kwargs)
+        context = {**context, 'mount': dict(context['mount']), 'destination_inode': context['destination_inode'] + 1}
+        if changed == 'filesystem':
+            context['mount']['fstype'] = 'ext4'
+        elif changed == 'device':
+            context['destination_device'] += 1
+        elif changed == 'uuid':
+            context['mount']['uuid'] = 'other-uuid'
+        elif changed == 'mountpoint':
+            context['mount']['target'] += '-other'
+        elif changed in ('destination', 'project'):
+            context[changed] += '-other'
+        return context
+
+    monkeypatch.setattr(mirror, 'destination_context', remounted)
+    status = mirror.backup_status(project, destination)
+    assert status['last_mirror'] is None
+    assert 'warning' in status
+
+
 def test_persistent_mirror_and_full_verification_are_independent(cli_mirror):
     project, destination, mount = cli_mirror
     assert mirror.backup_status(project, destination)['last_mirror'] is None

@@ -1145,8 +1145,13 @@ def backup_status(project, configured):
         plan = _completed_mirror_evidence(context, marker)
         with readonly_database(plan) as database:
             recorded = metadata(database, 'context')
-            if any(recorded.get(key) != context.get(key) for key in ('destination_inode', 'destination_device')):
+            inode_changed = recorded.get('destination_inode') != context.get('destination_inode')
+            same_exfat = recorded['mount'].get('fstype') == context['mount'].get('fstype') == 'exfat'
+            if (any(recorded.get(key) != context.get(key) for key in ('project', 'destination', 'destination_device'))
+                    or any(recorded['mount'].get(key) != context['mount'].get(key) for key in ('uuid', 'target', 'fstype'))
+                    or inode_changed and not same_exfat):
                 raise MirrorError('Selected mirror root no longer matches completed evidence')
+            result['historical_root_inode_changed'] = inode_changed
         mirrored = marker.get('last_verified_at')
         if _valid_backup_timestamp(mirrored):
             result['last_mirror'] = mirrored

@@ -26,6 +26,24 @@ def _read(path):
     return value
 
 
+def _user_manager_identity(directory):
+    info = directory.stat()
+    metadata = _read(directory / "stat").decode()
+    fields = metadata.rpartition(")")[2].split()
+    arguments = _read(directory / "cmdline")
+    group = _read(directory / "cgroup")
+    uid = os.getuid()
+    expected_group = f"0::/user.slice/user-{uid}.slice/user@{uid}.service/init.scope"
+    if (int(metadata.split("(", 1)[0]) != int(directory.name)
+            or metadata.partition("(")[2].rpartition(")")[0] != "systemd"
+            or fields[0] in ("Z", "X", "x") or int(fields[1]) != 1
+            or info.st_uid != uid
+            or arguments not in (b"/usr/lib/systemd/systemd\0--user\0", b"/lib/systemd/systemd\0--user\0")
+            or group.decode().splitlines() != [expected_group]):
+        raise MaintenanceError("Unverified user systemd parent identity")
+    return (int(directory.name), info.st_uid, int(fields[1]), int(fields[19]), arguments, group)
+
+
 def _process(directory):
     before = _read(directory / "stat")
     fields = before.decode().rpartition(")")[2].split()
@@ -33,12 +51,47 @@ def _process(directory):
         return None
     parent, started = int(fields[1]), int(fields[19])
     arguments = tuple(part.decode(errors="replace") for part in _read(directory / "cmdline").split(b"\0") if part)
-    cwd = os.readlink(directory / "cwd")
-    after = _read(directory / "stat").decode().rpartition(")")[2].split()
-    if not arguments or (int(after[1]), int(after[19])) != (parent, started):
+    manager = False
+    helper = False
+    parent_identity = None
+    try:
+        cwd = os.readlink(directory / "cwd")
+    except PermissionError:
+        uid = os.getuid()
+        expected_group = f"0::/user.slice/user-{uid}.slice/user@{uid}.service/init.scope"
+        comm = before.decode().partition("(")[2].rpartition(")")[0]
+        if (directory.stat().st_uid != uid
+                or _read(directory / "cgroup").decode().splitlines() != [expected_group]):
+            raise
+        if (comm == "systemd" and parent == 1
+                and arguments in (("/usr/lib/systemd/systemd", "--user"), ("/lib/systemd/systemd", "--user"))):
+            manager = True
+        elif comm == "(sd-pam)" and arguments == ("(sd-pam)",) and parent > 1:
+            parent_identity = _user_manager_identity(directory.parent / str(parent))
+            if parent_identity[3] > started:
+                raise MaintenanceError("User systemd parent started after its helper")
+            helper = True
+        else:
+            raise
+        if (_read(directory / "cmdline") != b"\0".join(argument.encode() for argument in arguments) + b"\0"
+                or _read(directory / "cgroup").decode().splitlines() != [expected_group]):
+            raise MaintenanceError("Process identity changed during inspection")
+        cwd = None
+    after_stat = _read(directory / "stat").decode()
+    after = after_stat.rpartition(")")[2].split()
+    if (not arguments or (int(after[1]), int(after[19])) != (parent, started)
+            or (manager or helper) and (
+                int(before.decode().split("(", 1)[0]) != int(directory.name)
+                or
+                int(after_stat.split("(", 1)[0]) != int(directory.name)
+                or after_stat.partition("(")[2].rpartition(")")[0] != before.decode().partition("(")[2].rpartition(")")[0]
+                or directory.stat().st_uid != os.getuid())):
         raise MaintenanceError("Process identity changed during inspection")
+    if helper and _user_manager_identity(directory.parent / str(parent)) != parent_identity:
+        raise MaintenanceError("User systemd parent identity changed during helper inspection")
     return {"pid": int(directory.name), "parent": parent, "started": started,
-            "arguments": arguments, "cwd": cwd}
+            "arguments": arguments, "cwd": cwd, "unrelated_user_manager": manager,
+            "unrelated_sd_pam": helper, "verified_parent_identity": parent_identity}
 
 
 def _snapshot(known_pids):
@@ -71,6 +124,8 @@ def _snapshot(known_pids):
 
 
 def _known_client(process, project):
+    if process.get("unrelated_user_manager") or process.get("unrelated_sd_pam"):
+        return False
     arguments = process["arguments"]
     names = {Path(argument).name for argument in arguments}
     if names & {"crossing", "crossing.py", "cli.py", "run_mcp.sh", "mcp_server.py"}:

@@ -348,6 +348,240 @@ def preflight_proc(tmp_path, monkeypatch):
     return root
 
 
+def _user_manager_fixture(root, monkeypatch, *, readable=False):
+    from services import maintenance_preflight
+
+    directory = _process_fixture(root, 123, ["/usr/lib/systemd/systemd", "--user"], "/")
+    path = directory / "stat"
+    path.write_text(path.read_text().replace("(fixture)", "(systemd)"))
+    (directory / "cgroup").write_text(
+        f"0::/user.slice/user-{os.getuid()}.slice/user@{os.getuid()}.service/init.scope\n"
+    )
+    readlink = maintenance_preflight.os.readlink
+
+    def inspect_link(path, *args, **kwargs):
+        if Path(path) == directory / "cwd" and not readable:
+            raise PermissionError("fixture daemon is not dumpable")
+        return readlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(maintenance_preflight.os, "readlink", inspect_link)
+    return directory
+
+
+@pytest.mark.parametrize("readable", [False, True])
+def test_preflight_identifies_unrelated_user_manager(preflight_proc, monkeypatch, tmp_path, readable):
+    from services import maintenance_preflight
+
+    _user_manager_fixture(preflight_proc, monkeypatch, readable=readable)
+    result = maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+    assert result["checked_processes"] == 1
+    assert result["mutation_authorized"] is False
+
+
+@pytest.mark.parametrize("changed", ["arguments", "comm", "parent", "cgroup", "missing_cgroup", "unreadable_cgroup"])
+def test_preflight_unreadable_manager_requires_independent_evidence(preflight_proc, monkeypatch, tmp_path, changed):
+    from services import maintenance_preflight
+
+    directory = _user_manager_fixture(preflight_proc, monkeypatch)
+    if changed == "arguments":
+        (directory / "cmdline").write_bytes(b"python3\0cli.py\0index\0")
+    elif changed == "comm":
+        path = directory / "stat"
+        path.write_text(path.read_text().replace("(systemd)", "(python3)"))
+    elif changed == "parent":
+        path = directory / "stat"
+        path.write_text(path.read_text().replace(") S 1 ", ") S 42 "))
+    elif changed == "cgroup":
+        (directory / "cgroup").write_text("0::/user.slice/app.slice\n")
+    elif changed == "missing_cgroup":
+        (directory / "cgroup").unlink()
+    else:
+        read = maintenance_preflight._read
+
+        def denied(path):
+            if path.name == "cgroup":
+                raise PermissionError("unreadable service membership")
+            return read(path)
+
+        monkeypatch.setattr(maintenance_preflight, "_read", denied)
+    with pytest.raises(access.MaintenanceError):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+@pytest.mark.parametrize("changed", ["pid_reuse", "exec", "comm_change", "service_move", "termination"])
+def test_preflight_unreadable_manager_rechecks_identity(preflight_proc, monkeypatch, tmp_path, changed):
+    from services import maintenance_preflight
+
+    directory = _user_manager_fixture(preflight_proc, monkeypatch)
+    read = maintenance_preflight._read
+    counts = {}
+
+    def changing(path):
+        counts[path.name] = counts.get(path.name, 0) + 1
+        if path.name == "stat" and counts[path.name] == 2:
+            if changed == "termination":
+                for entry in directory.iterdir():
+                    entry.unlink()
+                directory.rmdir()
+                raise FileNotFoundError("process exited")
+            if changed == "pid_reuse":
+                return read(path).rsplit(b" ", 1)[0] + b" 99999"
+            if changed == "comm_change":
+                return read(path).replace(b"(systemd)", b"(python3)")
+        if changed == "exec" and path.name == "cmdline" and counts[path.name] == 2:
+            return b"python3\0cli.py\0index\0"
+        if changed == "service_move" and path.name == "cgroup" and counts[path.name] == 2:
+            return b"0::/other.service\n"
+        return read(path)
+
+    monkeypatch.setattr(maintenance_preflight, "_read", changing)
+    if changed == "termination":
+        assert maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)["checked_processes"] == 0
+    else:
+        with pytest.raises(access.MaintenanceError, match="identity changed"):
+            maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+def test_preflight_operator_known_manager_still_blocks(preflight_proc, monkeypatch, tmp_path):
+    from services import maintenance_preflight
+
+    _user_manager_fixture(preflight_proc, monkeypatch)
+    with pytest.raises(access.MaintenanceBusy, match="remain: 123"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[123])
+
+
+def test_preflight_unreadable_unknown_process_still_refuses(preflight_proc, monkeypatch, tmp_path):
+    from services import maintenance_preflight
+
+    directory = _user_manager_fixture(preflight_proc, monkeypatch)
+    (directory / "cmdline").write_bytes(b"/usr/bin/unknown-daemon\0")
+    with pytest.raises(access.MaintenanceError, match="inspection is unavailable"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+def _sd_pam_fixture(root, monkeypatch):
+    from services import maintenance_preflight
+
+    parent = _user_manager_fixture(root, monkeypatch)
+    child = _process_fixture(root, 124, ["(sd-pam)"], "/", parent=123)
+    path = child / "stat"
+    path.write_text(path.read_text().replace("(fixture)", "((sd-pam))"))
+    (child / "cgroup").write_bytes((parent / "cgroup").read_bytes())
+    readlink = maintenance_preflight.os.readlink
+
+    def inspect_link(path, *args, **kwargs):
+        if Path(path) == child / "cwd":
+            raise PermissionError("fixture PAM helper is not dumpable")
+        return readlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(maintenance_preflight.os, "readlink", inspect_link)
+    return parent, child
+
+
+def test_preflight_accepts_parent_verified_sd_pam(tmp_path, preflight_proc, monkeypatch):
+    from services import maintenance_preflight
+
+    _sd_pam_fixture(preflight_proc, monkeypatch)
+    result = maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+    assert result["checked_processes"] == 2
+    assert result["mutation_authorized"] is False
+
+
+@pytest.mark.parametrize("changed", ["parent_argv", "parent_comm", "parent_group", "parent_missing",
+                                     "parent_newer", "parent_uid", "child_uid", "child_argv", "child_comm", "child_group"])
+def test_preflight_sd_pam_requires_verified_relationship(tmp_path, preflight_proc, monkeypatch, changed):
+    from services import maintenance_preflight
+
+    parent, child = _sd_pam_fixture(preflight_proc, monkeypatch)
+    if changed == "parent_missing":
+        for path in parent.iterdir():
+            path.unlink()
+        parent.rmdir()
+    elif changed in ("parent_uid", "child_uid"):
+        original = Path.stat
+        target = parent if changed == "parent_uid" else child
+
+        def changed_stat(path, *args, **kwargs):
+            result = original(path, *args, **kwargs)
+            if path == target:
+                from types import SimpleNamespace
+                return SimpleNamespace(st_uid=os.getuid() + 1)
+            return result
+
+        monkeypatch.setattr(Path, "stat", changed_stat)
+    else:
+        target = parent if changed.startswith("parent_") else child
+        if changed.endswith("argv"):
+            (target / "cmdline").write_bytes(b"python3\0cli.py\0index\0")
+        elif changed.endswith("comm"):
+            path = target / "stat"
+            path.write_text(path.read_text().replace("(systemd)", "(python3)").replace("((sd-pam))", "(python3)"))
+        elif changed.endswith("group"):
+            (target / "cgroup").write_text("0::/other.service\n")
+        else:
+            path = parent / "stat"
+            path.write_text(path.read_text().rsplit(" ", 1)[0] + " 99999")
+    with pytest.raises(access.MaintenanceError):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[124])
+
+
+@pytest.mark.parametrize("target", ["parent", "child"])
+@pytest.mark.parametrize("record", ["stat", "cmdline", "cgroup"])
+@pytest.mark.parametrize("failure", ["missing", "unreadable"])
+def test_preflight_sd_pam_rejects_missing_or_unreadable_evidence(tmp_path, preflight_proc, monkeypatch, target, record, failure):
+    from services import maintenance_preflight
+
+    parent, child = _sd_pam_fixture(preflight_proc, monkeypatch)
+    path = (parent if target == "parent" else child) / record
+    read = maintenance_preflight._read
+
+    def denied(source):
+        if source == path:
+            if failure == "missing":
+                raise FileNotFoundError("required evidence missing")
+            raise PermissionError("required evidence denied")
+        return read(source)
+
+    monkeypatch.setattr(maintenance_preflight, "_read", denied)
+    with pytest.raises(access.MaintenanceError):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+@pytest.mark.parametrize("target", ["parent", "child"])
+@pytest.mark.parametrize("record", ["stat", "cmdline", "cgroup"])
+def test_preflight_sd_pam_rechecks_parent_and_child(tmp_path, preflight_proc, monkeypatch, target, record):
+    from services import maintenance_preflight
+
+    parent, child = _sd_pam_fixture(preflight_proc, monkeypatch)
+    read = maintenance_preflight._read
+    calls = []
+    path = (parent if target == "parent" else child) / record
+
+    def changing(source):
+        value = read(source)
+        if source == path:
+            calls.append(source)
+            if len(calls) >= 2:
+                if record == "stat":
+                    return value.rsplit(b" ", 1)[0] + b" 99999"
+                if record == "cmdline":
+                    return b"python3\0cli.py\0index\0"
+                return b"0::/other.service\n"
+        return value
+
+    monkeypatch.setattr(maintenance_preflight, "_read", changing)
+    with pytest.raises(access.MaintenanceError):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+def test_preflight_operator_known_sd_pam_still_blocks(tmp_path, preflight_proc, monkeypatch):
+    from services import maintenance_preflight
+
+    _sd_pam_fixture(preflight_proc, monkeypatch)
+    with pytest.raises(access.MaintenanceBusy, match="124"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[124])
+
+
 def test_preflight_clean_shutdown_is_inspection_only(tmp_path, preflight_proc):
     from services.maintenance_preflight import check_quiescence
 
@@ -379,6 +613,8 @@ def test_preflight_requires_explicit_acknowledgement(tmp_path, preflight_proc, a
 
 @pytest.mark.parametrize("arguments", [
     ["crossing", "annotate"],
+    ["crossing", "index", "illustration"],
+    ["crossing", "engraving", "local-batch"],
     ["python3", "/old/crossing/mcp_server.py"],
     ["python3", "-m", "mcp_server.mcp_server"],
     ["python3", "/old/shot_visualizer.py"],
