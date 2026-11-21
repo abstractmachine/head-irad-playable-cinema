@@ -405,7 +405,7 @@ def test_preflight_unreadable_manager_requires_independent_evidence(preflight_pr
 
         monkeypatch.setattr(maintenance_preflight, "_read", denied)
     with pytest.raises(access.MaintenanceError):
-        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+        maintenance_preflight._snapshot(())
 
 
 @pytest.mark.parametrize("changed", ["pid_reuse", "exec", "comm_change", "service_move", "termination"])
@@ -439,7 +439,7 @@ def test_preflight_unreadable_manager_rechecks_identity(preflight_proc, monkeypa
         assert maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)["checked_processes"] == 0
     else:
         with pytest.raises(access.MaintenanceError, match="identity changed"):
-            maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+            maintenance_preflight._snapshot(())
 
 
 def test_preflight_operator_known_manager_still_blocks(preflight_proc, monkeypatch, tmp_path):
@@ -450,13 +450,16 @@ def test_preflight_operator_known_manager_still_blocks(preflight_proc, monkeypat
         maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[123])
 
 
-def test_preflight_unreadable_unknown_process_still_refuses(preflight_proc, monkeypatch, tmp_path):
+def test_preflight_unreadable_unknown_process_is_not_certified(preflight_proc, monkeypatch, tmp_path):
     from services import maintenance_preflight
 
     directory = _user_manager_fixture(preflight_proc, monkeypatch)
     (directory / "cmdline").write_bytes(b"/usr/bin/unknown-daemon\0")
-    with pytest.raises(access.MaintenanceError, match="inspection is unavailable"):
-        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+    diagnostics = []
+    processes = maintenance_preflight._snapshot((), diagnostics=diagnostics)
+    assert diagnostics
+    assert not processes[123].get("unrelated_user_manager")
+    assert processes[123]["partial_inspection"]
 
 
 def _sd_pam_fixture(root, monkeypatch):
@@ -522,7 +525,7 @@ def test_preflight_sd_pam_requires_verified_relationship(tmp_path, preflight_pro
             path = parent / "stat"
             path.write_text(path.read_text().rsplit(" ", 1)[0] + " 99999")
     with pytest.raises(access.MaintenanceError):
-        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[124])
+        maintenance_preflight._snapshot((124,))
 
 
 @pytest.mark.parametrize("target", ["parent", "child"])
@@ -544,7 +547,7 @@ def test_preflight_sd_pam_rejects_missing_or_unreadable_evidence(tmp_path, prefl
 
     monkeypatch.setattr(maintenance_preflight, "_read", denied)
     with pytest.raises(access.MaintenanceError):
-        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+        maintenance_preflight._snapshot(())
 
 
 @pytest.mark.parametrize("target", ["parent", "child"])
@@ -571,7 +574,7 @@ def test_preflight_sd_pam_rechecks_parent_and_child(tmp_path, preflight_proc, mo
 
     monkeypatch.setattr(maintenance_preflight, "_read", changing)
     with pytest.raises(access.MaintenanceError):
-        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+        maintenance_preflight._snapshot(())
 
 
 def test_preflight_operator_known_sd_pam_still_blocks(tmp_path, preflight_proc, monkeypatch):
@@ -580,6 +583,106 @@ def test_preflight_operator_known_sd_pam_still_blocks(tmp_path, preflight_proc, 
     _sd_pam_fixture(preflight_proc, monkeypatch)
     with pytest.raises(access.MaintenanceBusy, match="124"):
         maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[124])
+
+
+@pytest.mark.parametrize("crossing_active", [False, True])
+def test_single_operator_unreadable_infrastructure_is_diagnostic(
+    tmp_path, preflight_proc, monkeypatch, crossing_active,
+):
+    from services import maintenance_preflight
+
+    infrastructure = _process_fixture(preflight_proc, 120, ["/usr/bin/ssh-agent", "-D"], "/")
+    readlink = maintenance_preflight.os.readlink
+
+    def denied(path, *args, **kwargs):
+        if Path(path) == infrastructure / "cwd":
+            raise PermissionError("ordinary SSH infrastructure")
+        return readlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(maintenance_preflight.os, "readlink", denied)
+    if crossing_active:
+        _process_fixture(preflight_proc, 124, ["crossing", "index", "illustration"], tmp_path)
+        with pytest.raises(access.MaintenanceBusy, match="124"):
+            maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+    else:
+        result = maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+        assert result["survey_complete"] is False
+        assert result["diagnostics"]
+        assert result["mutation_authorized"] is False
+
+
+def test_single_operator_missing_survey_is_diagnostic(tmp_path, preflight_proc):
+    from services import maintenance_preflight
+
+    preflight_proc.rmdir()
+    result = maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+    assert result["survey_complete"] is False
+    assert result["diagnostics"]
+    assert result["mutation_authorized"] is False
+
+
+@pytest.mark.parametrize("known_job", [False, True])
+def test_single_operator_unreadable_command_information(tmp_path, preflight_proc, monkeypatch, known_job):
+    from services import maintenance_preflight
+
+    _process_fixture(preflight_proc, 123, ["unknown"], "/")
+    read = maintenance_preflight._read
+
+    def denied(path):
+        if path.name == "cmdline":
+            raise PermissionError("command is unavailable")
+        return read(path)
+
+    monkeypatch.setattr(maintenance_preflight, "_read", denied)
+    if known_job:
+        with pytest.raises(access.MaintenanceBusy, match="123"):
+            maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[123])
+    else:
+        assert maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)["diagnostics"]
+
+
+def test_single_operator_known_command_blocks_with_unreadable_cwd(tmp_path, preflight_proc, monkeypatch):
+    from services import maintenance_preflight
+
+    process = _process_fixture(preflight_proc, 123, ["crossing", "engraving", "local-batch"], tmp_path)
+    readlink = maintenance_preflight.os.readlink
+
+    def denied(path, *args, **kwargs):
+        if Path(path) == process / "cwd":
+            raise PermissionError("cwd is unavailable")
+        return readlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(maintenance_preflight.os, "readlink", denied)
+    with pytest.raises(access.MaintenanceBusy, match="123"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+@pytest.mark.parametrize("job_present", [False, True])
+def test_single_operator_explicit_job_after_truncated_survey(
+    tmp_path, preflight_proc, monkeypatch, job_present,
+):
+    from services import maintenance_preflight
+
+    _process_fixture(preflight_proc, 120, ["unrelated"], "/")
+    _process_fixture(preflight_proc, 121, ["unrelated"], "/")
+    if job_present:
+        _process_fixture(preflight_proc, 123, ["custom-job"], "/")
+    monkeypatch.setattr(maintenance_preflight, "_MAX_PROCESSES", 1)
+    if job_present:
+        with pytest.raises(access.MaintenanceBusy, match="123"):
+            maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[123])
+    else:
+        result = maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[123])
+        assert result["diagnostics"]
+        assert result["mutation_authorized"] is False
+
+
+def test_single_operator_diagnostics_do_not_supply_exclusive_owner(preflight_proc):
+    from services import maintenance_preflight
+
+    preflight_proc.rmdir()
+    with pytest.raises(access.MaintenanceError, match="exclusive inspection ownership"):
+        maintenance_preflight.check_quiescence(None, clients_stopped=True)
 
 
 def test_preflight_clean_shutdown_is_inspection_only(tmp_path, preflight_proc):
@@ -656,7 +759,7 @@ def test_preflight_recognizes_checkout_python_jobs_from_other_cwds(tmp_path, pre
             check_quiescence(owner, clients_stopped=True)
 
 
-def test_preflight_unavailable_inspection_refuses(tmp_path, preflight_proc, monkeypatch):
+def test_preflight_unavailable_operator_job_inspection_refuses(tmp_path, preflight_proc, monkeypatch):
     from services import maintenance_preflight
 
     _process_fixture(preflight_proc, 123, ["crossing"], tmp_path)
@@ -670,18 +773,20 @@ def test_preflight_unavailable_inspection_refuses(tmp_path, preflight_proc, monk
     monkeypatch.setattr(maintenance_preflight, "_read", denied)
     access.enroll(tmp_path, approved=True)
     with access.maintenance(tmp_path, "fixture", approved=True) as owner:
-        with pytest.raises(access.MaintenanceError, match="inspection is unavailable"):
+        with pytest.raises(access.MaintenanceBusy, match="123"):
             maintenance_preflight.check_quiescence(owner, clients_stopped=True, known_pids=[123])
 
 
-def test_preflight_missing_proc_refuses(tmp_path, preflight_proc):
+def test_preflight_missing_proc_is_diagnostic_under_exclusive_owner(tmp_path, preflight_proc):
     from services.maintenance_preflight import check_quiescence
 
     preflight_proc.rmdir()
     access.enroll(tmp_path, approved=True)
     with access.maintenance(tmp_path, "fixture", approved=True) as owner:
-        with pytest.raises(access.MaintenanceError, match="inspection is unavailable"):
-            check_quiescence(owner, clients_stopped=True)
+        result = check_quiescence(owner, clients_stopped=True)
+        assert result["diagnostics"]
+        assert result["mutation_authorized"] is False
+        assert owner.inspect()["state"] == "maintenance"
 
 
 def test_preflight_requires_live_exclusive_owner(preflight_proc):
@@ -714,22 +819,23 @@ def test_preflight_distinguishes_counters_from_process_identity(tmp_path, prefli
     access.enroll(tmp_path, approved=True)
     with access.maintenance(tmp_path, "fixture", approved=True) as owner:
         if identity_changed:
-            with pytest.raises(access.MaintenanceError, match="identity changed"):
-                maintenance_preflight.check_quiescence(owner, clients_stopped=True)
+            result = maintenance_preflight.check_quiescence(owner, clients_stopped=True)
+            assert any("identity changed" in item["message"] for item in result["diagnostics"])
         else:
             assert maintenance_preflight.check_quiescence(owner, clients_stopped=True)["checked_processes"] == 1
 
 
-def test_preflight_bound_refuses_instead_of_truncating(tmp_path, preflight_proc, monkeypatch):
+def test_preflight_bound_reports_incomplete_survey(tmp_path, preflight_proc, monkeypatch):
     from services import maintenance_preflight
 
     _process_fixture(preflight_proc, 123, ["unrelated"], "/")
-    _process_fixture(preflight_proc, 124, ["crossing"], tmp_path)
+    _process_fixture(preflight_proc, 124, ["unrelated"], "/")
     monkeypatch.setattr(maintenance_preflight, "_MAX_PROCESSES", 1)
     access.enroll(tmp_path, approved=True)
     with access.maintenance(tmp_path, "fixture", approved=True) as owner:
-        with pytest.raises(access.MaintenanceError, match="exceeded its bound"):
-            maintenance_preflight.check_quiescence(owner, clients_stopped=True)
+        result = maintenance_preflight.check_quiescence(owner, clients_stopped=True)
+        assert result["survey_complete"] is False
+        assert any("exceeded its bound" in item["message"] for item in result["diagnostics"])
 
 
 def test_preflight_real_process_shutdown_and_recheck(tmp_path):

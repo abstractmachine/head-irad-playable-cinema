@@ -2,6 +2,8 @@
 
 This snapshot is not resource-mutation authority or a general process inventory.
 The operator must stop known jobs and automatic launchers before requesting it.
+Unavailable OS inspection is diagnostic under the public single-operator check;
+operator acknowledgement, exclusive ownership and resource checks remain gates.
 """
 
 import os
@@ -94,7 +96,19 @@ def _process(directory):
             "unrelated_sd_pam": helper, "verified_parent_identity": parent_identity}
 
 
-def _snapshot(known_pids):
+def _diagnostic_process(directory):
+    arguments = tuple(part.decode(errors="replace") for part in _read(directory / "cmdline").split(b"\0") if part)
+    parent, started = 0, None
+    try:
+        metadata = _read(directory / "stat").decode().rpartition(")")[2].split()
+        parent, started = int(metadata[1]), int(metadata[19])
+    except (OSError, ValueError, IndexError, UnicodeError, MaintenanceError):
+        pass
+    return {"pid": int(directory.name), "parent": parent, "started": started,
+            "arguments": arguments, "cwd": "", "partial_inspection": True}
+
+
+def _snapshot(known_pids, *, diagnostics=None):
     processes = {}
     deadline = time.monotonic() + _MAX_SECONDS
     try:
@@ -105,6 +119,9 @@ def _snapshot(known_pids):
                     continue
                 count += 1
                 if count > _MAX_PROCESSES or time.monotonic() > deadline:
+                    if diagnostics is not None:
+                        diagnostics.append({"pid": None, "message": "Process inspection exceeded its bound"})
+                        break
                     raise MaintenanceError("Process inspection exceeded its bound")
                 directory = _PROC_ROOT / entry.name
                 try:
@@ -113,13 +130,42 @@ def _snapshot(known_pids):
                     process = _process(directory)
                     if process is not None:
                         processes[process["pid"]] = process
-                except FileNotFoundError:
-                    if directory.exists():
-                        raise MaintenanceError(f"Process {entry.name} cannot be inspected")
-    except (OSError, ValueError, IndexError, UnicodeError) as error:
-        raise MaintenanceError("Known-client process inspection is unavailable") from error
+                except (OSError, ValueError, IndexError, UnicodeError, MaintenanceError) as error:
+                    if isinstance(error, FileNotFoundError) and not directory.exists():
+                        continue
+                    if diagnostics is None:
+                        if isinstance(error, FileNotFoundError):
+                            raise MaintenanceError(f"Process {entry.name} cannot be inspected") from error
+                        raise
+                    diagnostics.append({"pid": int(entry.name), "message": str(error)[:512]})
+                    try:
+                        process = _diagnostic_process(directory)
+                    except (OSError, ValueError, IndexError, UnicodeError, MaintenanceError):
+                        process = {"pid": int(entry.name), "parent": 0, "started": None,
+                                   "arguments": (), "cwd": "", "partial_inspection": True}
+                    processes[process["pid"]] = process
+    except (OSError, ValueError, IndexError, UnicodeError, MaintenanceError) as error:
+        if diagnostics is not None:
+            diagnostics.append({"pid": None, "message": str(error)[:512]})
+        elif isinstance(error, MaintenanceError):
+            raise
+        else:
+            raise MaintenanceError("Known-client process inspection is unavailable") from error
     if time.monotonic() > deadline:
-        raise MaintenanceError("Process inspection exceeded its bound")
+        if diagnostics is None:
+            raise MaintenanceError("Process inspection exceeded its bound")
+        diagnostics.append({"pid": None, "message": "Process inspection exceeded its bound"})
+    if diagnostics:
+        for pid in known_pids:
+            if pid not in processes:
+                try:
+                    exited = _PROC_ROOT.is_dir() and not (_PROC_ROOT / str(pid)).exists()
+                except OSError:
+                    exited = False
+                if exited:
+                    continue
+                processes[pid] = {"pid": pid, "parent": 0, "started": None,
+                                  "arguments": (), "cwd": "", "partial_inspection": True}
     return processes
 
 
@@ -127,6 +173,8 @@ def _known_client(process, project):
     if process.get("unrelated_user_manager") or process.get("unrelated_sd_pam"):
         return False
     arguments = process["arguments"]
+    if not arguments:
+        return False
     names = {Path(argument).name for argument in arguments}
     if names & {"crossing", "crossing.py", "cli.py", "run_mcp.sh", "mcp_server.py"}:
         return True
@@ -146,14 +194,15 @@ def _known_client(process, project):
 
 
 def check_known_clients(project, *, clients_stopped=False, known_pids=()):
-    """Bounded pre-request snapshot; it grants no ownership or mutation authority."""
+    """Refuse known Crossing jobs; unrelated survey failures are diagnostic."""
     if clients_stopped is not True:
         raise MaintenanceError("Explicit operator acknowledgement of stopped clients is required")
     project = str(Path(project).resolve())
     known_pids = tuple(islice(known_pids, _MAX_PROCESSES + 1))
     if len(known_pids) > _MAX_PROCESSES or any(type(pid) is not int or pid <= 0 or pid == os.getpid() for pid in known_pids):
         raise MaintenanceError("Known client PIDs must be bounded positive non-controller identities")
-    processes = _snapshot(known_pids)
+    diagnostics = []
+    processes = _snapshot(known_pids, diagnostics=diagnostics)
     clients = {pid for pid, process in processes.items() if pid != os.getpid()
                and (pid in known_pids or _known_client(process, project))}
     pending = list(clients)
@@ -167,7 +216,8 @@ def check_known_clients(project, *, clients_stopped=False, known_pids=()):
         identities = ", ".join(str(pid) for pid in sorted(clients)[:16])
         raise MaintenanceBusy(f"Known Crossing clients or descendants remain: {identities}")
     return {"project": project, "checked_processes": len(processes), "scope": "single-operator-known-clients",
-            "mutation_authorized": False}
+            "mutation_authorized": False, "survey_complete": not diagnostics,
+            "diagnostics": diagnostics}
 
 
 def check_quiescence(owner, *, clients_stopped=False, known_pids=()):

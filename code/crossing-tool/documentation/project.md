@@ -1,5 +1,33 @@
 # Project Folder Structure
 
+## Single-Operator Maintenance Contract
+
+Crossing is operated by one person. Maintenance requires an explicitly
+authorized window with three conditions:
+
+1. The operator confirms that all Crossing visualizers, indexing, annotation,
+    generation and other project-writing operations have stopped.
+2. The existing maintenance owner acquires exclusivity, drains cooperating
+    project operations and prevents new cooperating operations.
+3. Before modifying files, migration validates the approved project, frozen
+    plan, available storage and accepted recovery source.
+
+Known active Crossing processes and explicit operator jobs still prevent
+progress. The process survey is supplemental diagnosis, not a complete
+multi-user process-supervision system. Permission failures or unavailable
+inspection of unrelated Linux processes produce diagnostics, not an
+independent migration veto. An incomplete survey is reported as incomplete;
+it is not proof that every OS process was inspected.
+
+SSH, VS Code Remote, ssh-agent and ordinary systemd user services remain
+available. File identity, no-overwrite renames, durable journals, recovery,
+rollback and final graph validation are unchanged. Failure to acquire
+exclusive ownership or failure of a required project-integrity check still
+blocks the migration. This policy does not enable a production migration
+command or authorize a migration by itself.
+
+## Layout
+
 ```
 <project>/
 ├── data/
