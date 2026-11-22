@@ -111,10 +111,33 @@ def _rename(source_parent, source, destination_parent, destination):
 
 def _capacity(root, count, path_bytes, directory_components):
     info = os.fstatvfs(root)
-    reserve = max(1024 * 1024, count * 4096 + path_bytes * 4 + directory_components * max(4096, info.f_frsize))
+    reserve = storage_headroom(count, path_bytes, directory_components, fragment=max(4096, info.f_frsize))
     if info.f_bavail * info.f_frsize < reserve or info.f_favail < directory_components + 16:
         raise OSError(28, "Insufficient journal/directory headroom")
     return reserve
+
+
+def storage_headroom(count, path_bytes, directory_components, *, fragment=4096):
+    return max(1024 * 1024, count * 4096 + path_bytes * 4 + directory_components * fragment)
+
+
+def remaining_directory_count(root, database, *, reverse=False):
+    finished = "undone" if reverse else "done"
+    previous = ()
+    missing = 0
+    for row in database.execute("SELECT destination FROM moves WHERE state!=? ORDER BY destination", (finished,)):
+        parts = tuple(row[0].split("/")[:-1])
+        common = 0
+        while common < min(len(previous), len(parts)) and previous[common] == parts[common]:
+            common += 1
+        for position in range(common, len(parts)):
+            try:
+                with _parent(root, list(parts[:position + 1]) + ["unused"]):
+                    pass
+            except FileNotFoundError:
+                missing += 1
+        previous = parts
+    return missing
 
 
 def _commit(database, parent, interrupt, phase):
@@ -178,7 +201,7 @@ def _run_moves(owner, root, database, journal_parent, project, plan_reference, p
         if stored is None:
             break
         previous = stored["source"]
-        owner.require_fixture_renames()
+        owner.require_migration()
         info = (project / plan_reference).lstat()
         if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != plan_stat:
             raise ValueError("Frozen plan changed during execution")
@@ -220,7 +243,7 @@ def _run_moves(owner, root, database, journal_parent, project, plan_reference, p
             _event(interrupt, prefix + "before-intent")
             _record(database, journal_parent, stored["source"], "undo-intent" if reverse else "intent", interrupt, prefix + "intent", identities)
             _event(interrupt, prefix + "intent-committed")
-            owner.require_fixture_renames()
+            owner.require_migration()
             _event(interrupt, prefix + "before-rename")
             info = (project / plan_reference).lstat()
             if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != plan_stat:
@@ -241,7 +264,7 @@ def _run_moves(owner, root, database, journal_parent, project, plan_reference, p
             os.fsync(destination_parent)
             _event(interrupt, prefix + "directories-synced")
             _event(interrupt, prefix + "before-completion")
-            owner.require_fixture_renames()
+            owner.require_migration()
             for parts, identity in ((source, identities[0]), (destination, identities[1])):
                 with _parent(root, parts) as (descriptor, _name):
                     if _directory_identity(descriptor) != identity:
@@ -253,11 +276,36 @@ def _run_moves(owner, root, database, journal_parent, project, plan_reference, p
             _event(interrupt, prefix + "between-moves")
 
 
+def verify_recovery_move(root, database, stored, project, plan_reference, *, reverse=False):
+    frozen = json.loads(stored["frozen"])
+    source, destination = _validate_row(project, frozen, plan_reference)
+    state = stored["state"]
+    latest = database.execute("SELECT state FROM events WHERE source=? ORDER BY sequence DESC LIMIT 1", (stored["source"],)).fetchone()
+    if (state not in ("planned", "intent", "done", "undo-intent", "undone")
+            or state == "planned" and (latest is not None or stored["parents"] is not None)
+            or state != "planned" and (latest is None or latest[0] != state or stored["parents"] is None)
+            or not reverse and state in ("undo-intent", "undone")):
+        raise ValueError("Incomplete recovery move intent/completion evidence")
+    with _parent(root, source) as (parent, name):
+        source_exists = _verify(parent, name, frozen, original=state == "planned")
+        source_identity = _directory_identity(parent)
+    try:
+        with _parent(root, destination) as (parent, name):
+            destination_exists = _verify(parent, name, frozen)
+            destination_identity = _directory_identity(parent)
+    except FileNotFoundError:
+        destination_exists, destination_identity = False, None
+    if (stored["parents"] is not None and json.loads(stored["parents"]) != [source_identity, destination_identity]
+            or source_exists == destination_exists or state in ("planned", "undone") and not source_exists
+            or state == "done" and not reverse and not destination_exists):
+        raise ValueError("Recovery move completion contradicts filesystem")
+
+
 def execute(owner, plan, *, approved_digest, plan_identity, clients_stopped=False, known_pids=(), action="forward", interrupt=None):
     """Execute or reverse only Move rows in an allocated temporary project."""
     if not isinstance(owner, access._InspectionOwner):
         raise access.MaintenanceError("Existing exclusive inspection owner required")
-    state = owner.require_fixture_renames()
+    state = owner.require_migration_plan(plan, approved_digest, plan_identity)
     check_quiescence(owner, clients_stopped=clients_stopped, known_pids=known_pids)
     if action not in ("forward", "rollback"):
         raise ValueError("Unknown file-move action")
@@ -279,12 +327,12 @@ def execute(owner, plan, *, approved_digest, plan_identity, clients_stopped=Fals
             raise ValueError("Frozen plan contains no moves")
         journal_name = "rename-" + state["operation"] + ".sqlite3"
         with access._root(project) as (_path, root), _parent(root, [access.CONTROL, journal_name]) as (parent, name):
-            reserve = _capacity(root, count, path_bytes, directory_components)
             try:
                 info = os.stat(name, dir_fd=parent, follow_symlinks=False)
             except FileNotFoundError:
                 if action != "forward":
                     raise ValueError("Rollback requires the original durable journal")
+                reserve = _capacity(root, count, path_bytes, directory_components)
                 _event(interrupt, "before-journal-create")
                 descriptor = os.open(name, os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600, dir_fd=parent)
                 info = os.fstat(descriptor)
@@ -294,6 +342,7 @@ def execute(owner, plan, *, approved_digest, plan_identity, clients_stopped=Fals
                 fresh = True
             else:
                 fresh = False
+                reserve = _capacity(root, 0, 0, 0)
             if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o077:
                 raise ValueError("Unsafe journal file")
             for suffix in ("-journal", "-wal", "-shm"):
@@ -331,6 +380,11 @@ def execute(owner, plan, *, approved_digest, plan_identity, clients_stopped=Fals
                         raise ValueError("Journal mapping differs from frozen plan")
                 if action == "forward" and headers[0]["direction"] != "forward":
                     raise ValueError("Rollback operation cannot resume forward")
+                if not fresh:
+                    final = "undone" if action == "rollback" else "done"
+                    pending = database.execute("SELECT count(*),coalesce(sum(length(CAST(source AS BLOB))+length(CAST(destination AS BLOB))),0),coalesce(sum(length(destination)-length(replace(destination,'/',''))),0) FROM moves WHERE state!=?", (final,)).fetchone()
+                    missing = remaining_directory_count(root, database, reverse=action == "rollback")
+                    reserve = _capacity(root, pending[0], pending[1], missing)
                 if action == "rollback" and headers[0]["direction"] == "forward":
                     database.execute("UPDATE meta SET direction='rollback'")
                     _commit(database, parent, interrupt, "rollback-start")
@@ -339,7 +393,7 @@ def execute(owner, plan, *, approved_digest, plan_identity, clients_stopped=Fals
                 final = "undone" if action == "rollback" else "done"
                 if database.execute("SELECT count(*) FROM moves WHERE state!=?", (final,)).fetchone()[0]:
                     raise ValueError("File-move operation is incomplete")
-                owner.require_fixture_renames()
+                owner.require_migration()
                 return {"state": "rolled_back" if action == "rollback" else "files_moved", "moves": count,
                         "journal": str(project / access.CONTROL / journal_name), "reserve_bytes": reserve,
                         "resource_mutation_authorized": False, "graph_accepted": False}

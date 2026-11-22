@@ -20,8 +20,10 @@ RECEIPT = "integrated-migration.json"
 def _binding(project, plan, approved_digest, plan_identity, operation_id):
     with access._root(project) as (project, root):
         identity = access._identity(project, root)
+        authority = {"fixture_only": True}
         if (identity["project"], identity["device"], identity["inode"]) not in access._rename_fixtures:
-            raise access.IncompleteCoverage("Integrated mutation is restricted to allocated temporary fixtures")
+            from services.migration_authorization import binding_for
+            authority = binding_for(project, plan, approved_digest, plan_identity, operation_id)
     plan, reference, fingerprint = renames._plan(project, plan, approved_digest, plan_identity)
     with closing(migration.readonly(plan)) as database:
         metadata = {row[0]: json.loads(row[1]) for row in database.execute("SELECT * FROM meta")}
@@ -30,11 +32,11 @@ def _binding(project, plan, approved_digest, plan_identity, operation_id):
             raise ValueError("Integrated plan/project identity differs")
     return project, {"version": 1, **identity, "operation": operation_id, "plan": reference,
                      "plan_sha256": approved_digest, "plan_identity": plan_identity,
-                     "plan_stat": list(fingerprint), "fixture_only": True}
+                     "plan_stat": list(fingerprint), **authority}
 
 
 def _load(owner, binding):
-    owner.require_fixture_renames()
+    owner.require_migration()
     with access._root(owner.project) as (_project, root), access._control(root) as control:
         if not access._exists(control, RECEIPT):
             if any(owner.project.joinpath(access.CONTROL).glob("rename-*.sqlite3")):
@@ -61,7 +63,7 @@ def _validate_record(record, binding):
 
 
 def _save(owner, record, phase, state, interrupt=None, **details):
-    owner.require_fixture_renames()
+    owner.require_migration()
     record = {**record, **details, "phase": phase, "state": state}
     if len(json.dumps(record, sort_keys=True, allow_nan=False).encode()) > 65536:
         raise ValueError("Integrated evidence exceeds its bounded commitment size")
@@ -80,27 +82,32 @@ def run_fixture_migration(project, plan, *, approved_digest, plan_identity, oper
     renames._event(interrupt, "before-enrollment")
     access.enroll(project, approved=True)
     with access.maintenance(project, operation_id, approved=True, timeout=timeout, interrupt=interrupt) as owner:
-        check_quiescence(owner, clients_stopped=True)
-        record = _load(owner, binding)
-        if record["state"] == "accepted":
-            _verified_acceptance(owner)
-            return {"state": "accepted", "phase": record["phase"], "maintenance_released": False}
-        if record["state"] in ("rolled-back", "restore-required", "released"):
-            raise ValueError("Integrated state cannot resume forward: " + record["state"])
-        arguments = {"approved_digest": approved_digest, "plan_identity": plan_identity,
-                     "clients_stopped": True, "interrupt": interrupt}
-        record = _save(owner, record, "relocating", "recoverable", interrupt)
-        try:
-            renames.execute(owner, plan, **arguments)
-            record = _save(owner, record, "relocated", "incomplete", interrupt)
-            record = _save(owner, record, "graph-installing", "recoverable", interrupt)
-            result = graph.install_fixture_graph(owner, plan, **arguments)
-            record = _save(owner, record, "graph-installed", "incomplete", interrupt, graph=result)
-        except Exception as error:
-            _save(owner, record, record["phase"], "recoverable" if isinstance(error, (RuntimeError, OSError)) else "failed", error=str(error)[:2048])
-            raise
-        return {"state": record["state"], "phase": record["phase"], "graph_accepted": result["graph_accepted"],
-                "maintenance_released": False}
+        return run_owned_migration(owner, plan, binding, interrupt)
+
+
+def run_owned_migration(owner, plan, binding, interrupt=None):
+    owner.require_migration_plan(plan, binding["plan_sha256"], binding["plan_identity"])
+    check_quiescence(owner, clients_stopped=True)
+    record = _load(owner, binding)
+    if record["state"] == "accepted":
+        _verified_acceptance(owner)
+        return {"state": "accepted", "phase": record["phase"], "maintenance_released": False}
+    if record["state"] in ("rolled-back", "restore-required", "released"):
+        raise ValueError("Integrated state cannot resume forward: " + record["state"])
+    arguments = {"approved_digest": binding["plan_sha256"], "plan_identity": binding["plan_identity"],
+                 "clients_stopped": True, "interrupt": interrupt}
+    record = _save(owner, record, "relocating", "recoverable", interrupt)
+    try:
+        renames.execute(owner, plan, **arguments)
+        record = _save(owner, record, "relocated", "incomplete", interrupt)
+        record = _save(owner, record, "graph-installing", "recoverable", interrupt)
+        result = graph.install_fixture_graph(owner, plan, **arguments)
+        record = _save(owner, record, "graph-installed", "incomplete", interrupt, graph=result)
+    except Exception as error:
+        _save(owner, record, record["phase"], "recoverable" if isinstance(error, (RuntimeError, OSError)) else "failed", error=str(error)[:2048])
+        raise
+    return {"state": record["state"], "phase": record["phase"], "graph_accepted": result["graph_accepted"],
+            "maintenance_released": False}
 
 
 def _verify_graph(owner, record, interrupt=None):
@@ -129,7 +136,7 @@ def _verify_graph(owner, record, interrupt=None):
 
 
 def _verified_acceptance(owner):
-    state = owner.require_fixture_renames()
+    state = owner.require_migration()
     with access._root(owner.project) as (_project, root), access._control(root) as control:
         record = access._read(control, RECEIPT)
         context = access._read(control, access.CANONICAL_CONTEXT)
@@ -153,27 +160,35 @@ def accept_fixture_migration(project, plan, *, approved_digest, plan_identity, o
     project, binding = _binding(project, plan, approved_digest, plan_identity, operation_id)
     check_known_clients(project, clients_stopped=True)
     with access.maintenance(project, operation_id, approved=True) as owner:
-        record = _load(owner, binding)
-        if record["phase"] not in ("graph-installed", "accepted"):
-            raise ValueError("Graph installation must complete before integrated acceptance")
-        _verify_graph(owner, record, interrupt)
-        renames._event(interrupt, "before-acceptance-recording")
-        _verify_graph(owner, record)
-        with access._root(project) as (_project, root), access._control(root) as control:
-            context = access._read(control, access.CANONICAL_CONTEXT)
-        accepted = {"canonical_context": context,
-                    "rename_journal_sha256": digest(project / access.CONTROL / ("rename-" + operation_id + ".sqlite3")),
-                    "graph_journal_sha256": digest(project / access.CONTROL / ("graph-" + operation_id + ".sqlite3"))}
-        _save(owner, record, "accepted", "accepted", interrupt, acceptance=accepted)
-        renames._event(interrupt, "acceptance-recorded")
-        return {"state": "accepted", "maintenance_released": False}
+        return accept_owned_migration(owner, binding, interrupt)
+
+
+def accept_owned_migration(owner, binding, interrupt=None):
+    project, operation_id = owner.project, owner.operation_id
+    record = _load(owner, binding)
+    if record["phase"] not in ("graph-installed", "accepted"):
+        raise ValueError("Graph installation must complete before integrated acceptance")
+    _verify_graph(owner, record, interrupt)
+    renames._event(interrupt, "before-acceptance-recording")
+    _verify_graph(owner, record)
+    with access._root(project) as (_project, root), access._control(root) as control:
+        context = access._read(control, access.CANONICAL_CONTEXT)
+    accepted = {"canonical_context": context,
+                "rename_journal_sha256": digest(project / access.CONTROL / ("rename-" + operation_id + ".sqlite3")),
+                "graph_journal_sha256": digest(project / access.CONTROL / ("graph-" + operation_id + ".sqlite3"))}
+    _save(owner, record, "accepted", "accepted", interrupt, acceptance=accepted)
+    renames._event(interrupt, "acceptance-recorded")
+    return {"state": "accepted", "maintenance_released": False}
 
 
 def released_evidence(project, root, state, record):
     identity = access._identity(project, root)
     if (identity["project"], identity["device"], identity["inode"]) not in access._rename_fixtures:
-        raise access.IncompleteCoverage("Production reopening remains disabled")
-    if (record.get("state") != "released" or record.get("phase") != "released" or record.get("fixture_only") is not True
+        from services.migration_authorization import require_released
+        require_released(project, state, record)
+    elif record.get("fixture_only") is not True:
+        raise access.MaintenanceError("Fixture release authority differs")
+    if (record.get("state") != "released" or record.get("phase") != "released"
             or record.get("operation") != state.get("operation") or any(record.get(key) != value for key, value in identity.items())
             or not isinstance(record.get("acceptance"), dict)
             or digest(project / access.CONTROL / RECEIPT) != state.get("release_evidence")):
@@ -191,11 +206,15 @@ def release_fixture_migration(project, plan, *, approved_digest, plan_identity, 
         access.canonical_registry(project)
         return {"state": "released", "maintenance_released": True, "production_authorized": False}
     with access.maintenance(project, operation_id, approved=True) as owner:
-        record = _load(owner, binding)
-        _verified_acceptance(owner)
-        _save(owner, record, "release-intent", "accepted", interrupt)
-        renames._event(interrupt, "before-release")
-        return access._release_fixture(owner, interrupt=interrupt)
+        return release_owned_migration(owner, binding, interrupt)
+
+
+def release_owned_migration(owner, binding, interrupt=None):
+    record = _load(owner, binding)
+    _verified_acceptance(owner)
+    _save(owner, record, "release-intent", "accepted", interrupt)
+    renames._event(interrupt, "before-release")
+    return access._release_fixture(owner, interrupt=interrupt)
 
 
 def _verify_original(owner, record):
@@ -218,17 +237,24 @@ def rollback_fixture_migration(project, plan, *, approved_digest, plan_identity,
         raise access.MaintenanceError("Explicit fixture rollback acknowledgement required")
     project, binding = _binding(project, plan, approved_digest, plan_identity, operation_id)
     check_known_clients(project, clients_stopped=True)
-    with access.maintenance(project, operation_id, approved=True) as owner, access.fixture_graph_access(owner):
+    with access.maintenance(project, operation_id, approved=True) as owner:
+        return rollback_owned_migration(owner, binding, interrupt)
+
+
+def rollback_owned_migration(owner, binding, interrupt=None):
+    project = owner.project
+    plan = project / binding["plan"]
+    with access.fixture_graph_access(owner):
         record = _load(owner, binding)
         if record["state"] == "rolled-back":
             _verify_original(owner, record)
             return {"outcome": "rollback", "state": "rolled-back", "maintenance_released": False}
         record = _save(owner, record, "rollback-intent", "recoverable", interrupt)
-        arguments = {"approved_digest": approved_digest, "plan_identity": plan_identity,
+        arguments = {"approved_digest": binding["plan_sha256"], "plan_identity": binding["plan_identity"],
                      "clients_stopped": True, "interrupt": interrupt}
         try:
-            graph_journal = project / access.CONTROL / ("graph-" + operation_id + ".sqlite3")
-            rename_journal = project / access.CONTROL / ("rename-" + operation_id + ".sqlite3")
+            graph_journal = project / access.CONTROL / ("graph-" + owner.operation_id + ".sqlite3")
+            rename_journal = project / access.CONTROL / ("rename-" + owner.operation_id + ".sqlite3")
             reverse = False
             if rename_journal.exists():
                 with closing(migration.readonly(rename_journal)) as database:

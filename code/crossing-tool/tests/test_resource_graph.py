@@ -905,6 +905,36 @@ def test_storage_budget_uses_unique_directories_and_shared_allocations():
         assert not budget["production_approved"]
 
 
+def test_storage_budget_credits_exact_completed_metadata_blocks_only():
+    from services.resource_graph import graph_storage_budget
+    with access.temporary_rename_project() as project:
+        plan, _, preparation, _ = _member_fixture(project)
+        full = graph_storage_budget(plan, preparation_bytes=preparation.stat().st_size)
+        remaining = graph_storage_budget(plan, preparation_bytes=preparation.stat().st_size,
+                                         transformation_pending=lambda row: False)
+        assert remaining["components"]["transformed_metadata_blocks"] == 0
+        assert full["peak_additional_bytes"] - remaining["peak_additional_bytes"] == full["components"]["transformed_metadata_blocks"]
+        assert remaining["components"]["safety_margin"] == full["components"]["safety_margin"] == 4 * 1024**3
+        assert remaining["components"]["one_working_registry"] == full["components"]["one_working_registry"]
+
+
+def test_storage_budget_reserves_rollback_move_destination_directories():
+    from services.resource_graph import graph_storage_budget
+    with access.temporary_rename_project() as project:
+        plan, _, preparation, _ = _member_fixture(project)
+        with sqlite3.connect(plan) as database:
+            rows = database.execute("SELECT source,destination FROM files WHERE disposition='Move'").fetchall()
+        old_parents = {str(Path(source).parent) for source, destination in rows}
+        missing = {str(Path(destination).parent) for source, destination in rows} - old_parents
+        budget = graph_storage_budget(plan, preparation_bytes=preparation.stat().st_size, direction="rollback",
+                                      work_pending=lambda row: row["disposition"] == "Move",
+                                      directory_pending=lambda reference: reference in missing)
+        assert missing
+        assert budget["unique_destination_directories"] == len(missing)
+        assert budget["components"]["directory_and_entry_blocks"] >= len(missing) * 8192
+        assert budget["components"]["safety_margin"] == 4 * 1024**3
+
+
 @pytest.mark.parametrize("boundary", ["context-reversal-intent:synced", "context-retired", "context-reversed:synced"])
 def test_context_reversal_is_durable_and_repeated(boundary):
     from services.resource_graph import install_fixture_graph, rollback_fixture_graph

@@ -31,6 +31,13 @@ _canonical_registry_check = ContextVar("crossing_canonical_registry_check", defa
 _descriptors = set()
 _active = set()
 _rename_fixtures = set()
+_authorization_fixtures = set()
+
+
+def _identity_key_for_authorization(project):
+    with _root(project) as (path, root):
+        identity = _identity(path, root)
+    return identity["project"], identity["device"], identity["inode"]
 
 
 class MaintenanceError(RuntimeError):
@@ -246,7 +253,7 @@ def operation(project):
         key = (_execution(), str(path), os.fstat(root).st_dev, os.fstat(root).st_ino)
         fixture_owner = _fixture_graph_owner.get()
         if fixture_owner is not None and str(fixture_owner.project) == str(path):
-            state = fixture_owner.require_fixture_renames()
+            state = fixture_owner.require_migration()
             if (state["device"], state["inode"]) != key[2:]:
                 raise MaintenanceError("Fixture graph project identity changed")
             _check_path(path, root)
@@ -375,7 +382,7 @@ def canonical_registry(project):
         if context.get("state") != "task3-qualified-awaiting-task4" or (owner is None and not released):
             raise MaintenanceClosed("Canonical context awaits Task 4 acceptance and release")
         if owner is not None:
-            owner.require_fixture_renames()
+            owner.require_migration()
         from data.resource_locations import project_file
         from data.resource_storage import digest
         import sqlite3
@@ -496,12 +503,27 @@ class _InspectionOwner:
         return state
 
 
+    def require_migration(self):
+        state = self.inspect()
+        if (state["project"], state["device"], state["inode"]) in _rename_fixtures:
+            return state
+        from services.migration_authorization import require_owner
+        return require_owner(self)
+
+    def require_migration_plan(self, plan, checksum, revision):
+        state = self.require_migration()
+        if (state["project"], state["device"], state["inode"]) not in _rename_fixtures:
+            from services.migration_authorization import require_plan
+            require_plan(self, plan, checksum, revision)
+        return state
+
+
 @contextmanager
 def fixture_graph_access(owner):
     """Allow canonical owner calls only inside a live allocated-fixture owner."""
     if not isinstance(owner, _InspectionOwner):
         raise MaintenanceError("Exclusive fixture owner required")
-    owner.require_fixture_renames()
+    owner.require_migration()
     token = _fixture_graph_owner.set(owner)
     try:
         yield
@@ -523,6 +545,21 @@ def temporary_rename_project():
             yield project
         finally:
             _rename_fixtures.discard(identity)
+
+
+@contextmanager
+def temporary_authorization_project():
+    """Allocate a production-path test root without legacy fixture authority."""
+    with temporary_rename_project() as project:
+        info = project.stat()
+        identity = str(project), info.st_dev, info.st_ino
+        _rename_fixtures.remove(identity)
+        _authorization_fixtures.add(identity)
+        try:
+            yield project
+        finally:
+            _authorization_fixtures.discard(identity)
+            _rename_fixtures.add(identity)
 
 
 @contextmanager
@@ -597,7 +634,7 @@ def _release_fixture(owner, *, interrupt=None):
     from services import resource_rename as renames
     from data.resource_storage import digest
 
-    state = owner.require_fixture_renames()
+    state = owner.require_migration()
     record = _verified_acceptance(owner)
     record = _save(owner, record, "released", "released", interrupt)
     _verified_acceptance(owner)

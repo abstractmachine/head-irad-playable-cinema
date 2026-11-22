@@ -1,6 +1,6 @@
 """Fixture-only installation evidence for the frozen media-first resource graph."""
 
-from contextlib import closing
+from contextlib import closing, ExitStack
 from functools import wraps
 import json
 import os
@@ -24,9 +24,13 @@ def _fixture_access(function):
     return guarded
 
 
-def graph_storage_budget(plan, *, preparation_bytes, fragment=4096):
+def graph_storage_budget(plan, *, preparation_bytes, fragment=4096, transformation_pending=None,
+                         work_pending=None, directory_pending=None, registry_pending=True,
+                         existing_journals=(), direction="forward", allocation_pending=None,
+                         registry_baseline_pending=True):
     """Stream the frozen mapping; do not inspect payloads or allocate an inventory."""
-    if type(fragment) is not int or fragment < 4096 or type(preparation_bytes) is not int or preparation_bytes < 0:
+    if (type(fragment) is not int or fragment < 4096 or type(preparation_bytes) is not int or preparation_bytes < 0
+            or direction not in ("forward", "rollback")):
         raise ValueError("Invalid storage accounting parameters")
     def rounded(size):
         return ((size + fragment - 1) // fragment) * fragment
@@ -47,32 +51,53 @@ def graph_storage_budget(plan, *, preparation_bytes, fragment=4096):
     with closing(migration.readonly(Path(plan).resolve(strict=True))) as database:
         for disposition, count, size in database.execute("SELECT disposition,count(*),sum(size) FROM files GROUP BY disposition"):
             counts[disposition], existing[disposition] = count, size or 0
-        for row in database.execute("SELECT * FROM files WHERE disposition IN ('Move','Transform') ORDER BY destination"):
-            parts = tuple(row["destination"].split("/")[:-1])
+        if work_pending is not None:
+            counts, existing = {}, {}
+            for row in database.execute("SELECT * FROM files WHERE disposition IN ('Move','Transform','Rebuild')"):
+                if work_pending(row):
+                    counts[row["disposition"]] = counts.get(row["disposition"], 0) + 1
+                    existing[row["disposition"]] = existing.get(row["disposition"], 0) + row["size"]
+        ordering = "CASE WHEN disposition='Move' THEN destination ELSE source END" if direction == "rollback" else "destination"
+        for row in database.execute("SELECT * FROM files WHERE disposition IN ('Move','Transform') ORDER BY " + ordering):
+            if work_pending is not None and not work_pending(row):
+                continue
+            directory_path = row["source"] if direction == "rollback" and row["disposition"] == "Transform" else row["destination"]
+            parts = tuple(directory_path.split("/")[:-1])
             common = 0
             while common < min(len(parts), len(previous)) and parts[common] == previous[common]:
                 common += 1
             for position in range(common, len(parts)):
-                directories += 1
-                directory_bytes += len("/".join(parts[:position + 1]).encode())
-                entries_bytes += len(parts[position].encode()) + 32
+                reference = "/".join(parts[:position + 1])
+                if directory_pending is None or directory_pending(reference):
+                    directories += 1
+                    directory_bytes += len(reference.encode())
+                    entries_bytes += len(parts[position].encode()) + 32
             previous = parts
-            entries_bytes += len(Path(row["destination"]).name.encode()) + 32
+            name_bytes = len(Path(row["destination"]).name.encode())
+            if direction == "rollback":
+                name_bytes = max(name_bytes, len(Path(row["source"]).name.encode()))
+            entries_bytes += name_bytes + 32
             path_bytes += len(row["source"].encode()) + len(row["destination"].encode())
-            if row["disposition"] == "Move":
+            if row["disposition"] == "Move" and "rename" not in existing_journals:
                 move_evidence += len(renames._encode(dict(row)).encode())
         for row in database.execute("SELECT f.*,t.schema,t.patch,t.after_sha256,t.after_bytes FROM files f JOIN transformations t USING(source) WHERE f.disposition='Transform'"):
-            transform_evidence += len(renames._encode(dict(row)).encode())
+            if "graph" not in existing_journals:
+                transform_evidence += len(renames._encode(dict(row)).encode())
             size = row["after_bytes"]
-            transformed_bytes += size
-            transformed_blocks += rounded(size)
+            if (direction == "forward" and (work_pending is None or work_pending(row))
+                    and (transformation_pending is None or transformation_pending(row))):
+                transformed_bytes += size
+                transformed_blocks += rounded(size)
             largest_metadata = max(largest_metadata, size)
             if row["schema"] in ("silhouette-v1", "engraving-v2"):
                 pairs += 1
                 registry_growth += rounded(8192 + 4 * len(row["destination"].encode()))
-        largest_index = database.execute("SELECT coalesce(max(size),0) FROM files WHERE disposition='Rebuild'").fetchone()[0]
+        largest_index = max((row["size"] for row in database.execute("SELECT * FROM files WHERE disposition='Rebuild'")
+                             if (work_pending is None or work_pending(row)) and (allocation_pending is None or allocation_pending(row))), default=0)
+        if allocation_pending is not None:
+            existing["Rebuild"] = sum(row["size"] for row in database.execute("SELECT * FROM files WHERE disposition='Rebuild'") if allocation_pending(row))
     total_records = counts.get("Move", 0) + counts.get("Transform", 0)
-    registry = rounded(preparation_bytes) + registry_growth + 4 * rounded(largest_metadata)
+    registry = (rounded(preparation_bytes) if registry_baseline_pending else 0) + registry_growth + 4 * rounded(largest_metadata) if registry_pending and direction == "forward" else 0
     old_indexes = existing.get("Rebuild", 0)
     components = {
         "renamed_payload_copies": 0,
@@ -80,11 +105,11 @@ def graph_storage_budget(plan, *, preparation_bytes, fragment=4096):
         "transformed_metadata_blocks": transformed_blocks,
         "execution_journals": 2 * rounded(move_evidence + transform_evidence + total_records * 1024 + path_bytes * 2) + 32 * 1024**2,
         "one_working_registry": registry,
-        "replacement_indexes": 2 * rounded(old_indexes),
+        "replacement_indexes": 2 * rounded(old_indexes) if direction == "forward" else 0,
         "sqlite_temp_and_rollback": max(2 * rounded(largest_index), 64 * 1024**2),
         "directory_and_entry_blocks": directories * 2 * fragment + 2 * rounded(entries_bytes),
         "inode_and_control_metadata": rounded((directories + counts.get("Transform", 0) + 256) * 1024),
-        "unsealed_retention_and_rollback": rounded(preparation_bytes) + 2 * rounded(old_indexes) + 4 * rounded(largest_metadata) + 64 * 1024**2,
+        "unsealed_retention_and_rollback": (rounded(preparation_bytes) if registry_pending and registry_baseline_pending and direction == "forward" else 0) + (2 * rounded(old_indexes) if direction == "forward" else 0) + 4 * rounded(largest_metadata) + 64 * 1024**2,
         "safety_margin": 4 * 1024**3,
     }
     return {"counts": counts, "existing_payload_bytes": existing, "unique_destination_directories": directories,
@@ -100,14 +125,335 @@ def graph_storage_budget(plan, *, preparation_bytes, fragment=4096):
                             "two directory blocks plus twice encoded entries", "Task 4 validates physical allocation assumptions"]}
 
 
-def _exact(project, reference, checksum):
+def remaining_storage_budget(project, identity, enrollment, *, action, approval_id, approval_identity_sha256):
+    """Verify frozen journal/file evidence before crediting allocated work."""
+    from services.migration_interface import _evidence_database, _file, _stat
+    from services.resource_integration import RECEIPT, _validate_record
+    project = Path(project)
+    direction = "rollback" if action == "rollback" else "forward"
+    operation = identity["operation"]
+    binding = {key: identity[key] for key in ("project", "device", "inode", "operation", "plan", "plan_sha256", "plan_stat")}
+    binding.update(version=1, plan_identity="2B.3d", fixture_only=False, approval_id=approval_id,
+                   approval_identity_sha256=approval_identity_sha256)
+    names = {kind: access.CONTROL + "/" + kind + "-" + operation + ".sqlite3" for kind in ("rename", "graph")}
+    stage = access.CONTROL + "/graph-" + operation
+    snapshots = {}
+    with ExitStack() as stack, access._root(project) as (_project, root):
+        state = access._state(project, root)
+        if (state is None or any(state.get(key) != identity[key] for key in ("project", "device", "inode"))
+                or any(state.get(key) != value for key, value in enrollment.items())
+                or state.get("operation") != operation):
+            raise ValueError("Remaining-capacity enrollment or operation differs")
+        for reference, expected in ((identity["plan"], identity["plan_stat"]), (identity["identity_allocation"], identity["allocation_stat"])):
+            snapshots[reference] = _stat(_file(project, reference))
+            if snapshots[reference] != expected:
+                raise ValueError("Frozen capacity input identity changed")
+        with access._control(root) as control:
+            record = access._read(control, RECEIPT) if access._exists(control, RECEIPT) else None
+        journals = {}
+        for kind, reference in names.items():
+            if os.path.lexists(project / reference):
+                path = _file(project, reference)
+                info = path.stat()
+                if info.st_uid != os.getuid() or info.st_mode & 0o077:
+                    raise ValueError("Unsafe recovery journal")
+                snapshots[reference] = _stat(path)
+                journals[kind] = stack.enter_context(_evidence_database(project, reference))
+                _integrity(journals[kind])
+        if record is None:
+            if journals:
+                raise ValueError("Missing integrated evidence beside recovery journals")
+        else:
+            _validate_record(record, binding)
+            snapshots[access.CONTROL + "/" + RECEIPT] = _stat(project / access.CONTROL / RECEIPT)
+            if "rename" not in journals and record["phase"] not in ("maintenance", "relocating", "rollback-intent"):
+                raise ValueError("Missing rename evidence for recorded migration phase")
+            if "graph" not in journals and record["phase"] in ("graph-installed", "accepted", "release-intent", "released", "graph-reversed", "rename-rollback"):
+                raise ValueError("Missing graph evidence for recorded migration phase")
+        if "graph" in journals and "rename" not in journals:
+            raise ValueError("Graph journal without rename handoff")
+        frozen = stack.enter_context(_evidence_database(project, identity["plan"]))
+        renaming = journals.get("rename")
+        graphing = journals.get("graph")
+        if renaming is not None:
+            header = {"version": 1, "project": str(project), "device": state["device"], "inode": state["inode"],
+                      "token": state["token"], "operation": operation, "plan": identity["plan"], "plan_identity": "2B.3d",
+                      "plan_digest": identity["plan_sha256"], "plan_stat": identity["plan_stat"],
+                      "journal_inode": snapshots[names["rename"]][1], "journal_device": snapshots[names["rename"]][0],
+                      "moves": frozen.execute("SELECT count(*) FROM files WHERE disposition='Move'").fetchone()[0]}
+            headers = renaming.execute("SELECT * FROM meta").fetchall()
+            if (len(headers) != 1 or json.loads(headers[0]["payload"]) != header
+                    or headers[0]["direction"] not in ("forward", "rollback")
+                    or direction == "forward" and headers[0]["direction"] != "forward"):
+                raise ValueError("Remaining-capacity rename binding or direction differs")
+            for stored, expected in zip(renaming.execute("SELECT * FROM moves ORDER BY source"), renames._rows(frozen), strict=True):
+                if (stored["source"] != expected["source"] or stored["destination"] != expected["destination"]
+                        or json.loads(stored["frozen"]) != expected):
+                    raise ValueError("Remaining-capacity move mapping differs from approved plan")
+                renames.verify_recovery_move(root, renaming, stored, project, identity["plan"], reverse=direction == "rollback")
+        if graphing is not None:
+            expected_header = {"project": str(project), "token": state["token"], "operation": operation,
+                               "plan": identity["plan"], "sha256": identity["plan_sha256"], "revision": "2B.3d", "stat": identity["plan_stat"]}
+            headers = graphing.execute("SELECT * FROM meta").fetchall()
+            if (len(headers) != 1 or json.loads(headers[0]["payload"]) != expected_header
+                    or headers[0]["direction"] not in ("forward", "rollback")
+                    or direction == "forward" and headers[0]["direction"] != "forward"):
+                raise ValueError("Remaining-capacity graph binding or direction differs")
+            expected = frozen.execute("SELECT f.*,t.schema,t.patch,t.after_sha256,t.after_bytes FROM files f LEFT JOIN transformations t USING(source) WHERE disposition='Transform' ORDER BY source")
+            for number, (stored, row) in enumerate(zip(graphing.execute("SELECT * FROM transforms ORDER BY source"), expected, strict=True)):
+                if (stored["number"] != number or stored["source"] != row["source"] or stored["destination"] != row["destination"]
+                        or json.loads(stored["evidence"]) != dict(row)):
+                    raise ValueError("Remaining-capacity transformation mapping differs")
+                verify_recovery_transform(project, stored, stage, direction)
+            if renaming.execute("SELECT 1 FROM moves WHERE state!='done' LIMIT 1").fetchone():
+                if direction != "rollback" or graphing.execute("SELECT 1 FROM transforms WHERE state!='undone' LIMIT 1").fetchone():
+                    raise ValueError("Graph/rename reversal ordering contradicts journals")
+        tables = {row[0] for row in graphing.execute("SELECT name FROM sqlite_master WHERE type='table'")} if graphing else set()
+        registry_pending, registry_baseline_pending = _verify_recovery_outputs(project, frozen, graphing, tables, identity, stage, direction)
+
+        def pending(row):
+            if row["disposition"] == "Move":
+                stored = renaming.execute("SELECT state FROM moves WHERE source=?", (row["source"],)).fetchone() if renaming else None
+            elif row["disposition"] == "Transform":
+                stored = graphing.execute("SELECT state FROM transforms WHERE source=?", (row["source"],)).fetchone() if graphing else None
+            else:
+                stored = graphing.execute("SELECT state FROM index_outputs WHERE source=?", (row["source"],)).fetchone() if "index_outputs" in tables else None
+            if stored is None:
+                if not _exact(project, row["source"], row["sha256"], reader=_file):
+                    raise ValueError("Unjournaled original file is missing")
+                return direction == "forward"
+            return stored[0] != ("undone" if direction == "rollback" else "installed" if row["disposition"] == "Rebuild" else "done")
+
+        def missing_directory(reference):
+            try:
+                with renames._parent(root, reference.split("/") + ["unused"]):
+                    return False
+            except FileNotFoundError:
+                return True
+
+        def allocation_pending(row):
+            stored = graphing.execute("SELECT state FROM index_outputs WHERE source=?", (row["source"],)).fetchone() if "index_outputs" in tables else None
+            return stored is None or stored[0] not in ("built", "installed")
+
+        fragment = max(4096, os.fstatvfs(root).f_frsize)
+        budget = graph_storage_budget(project / identity["plan"], preparation_bytes=identity["allocation_stat"][2], fragment=fragment,
+                                      work_pending=pending, directory_pending=missing_directory,
+                                      registry_pending=registry_pending, existing_journals=journals, direction=direction,
+                                      allocation_pending=allocation_pending, registry_baseline_pending=registry_baseline_pending)
+        move_count = move_paths = move_directories = 0
+        for row in frozen.execute("SELECT * FROM files WHERE disposition='Move'"):
+            if pending(row):
+                move_count += 1
+                move_paths += len(row["source"].encode()) + len(row["destination"].encode())
+        if renaming is not None:
+            move_directories = renames.remaining_directory_count(root, renaming, reverse=direction == "rollback")
+        else:
+            move_directories = budget["unique_destination_directories"]
+        rename_reserve = renames.storage_headroom(move_count, move_paths, move_directories, fragment=fragment)
+        non_margin = budget["peak_additional_bytes"] - budget["components"]["safety_margin"]
+        budget["components"]["rename_owner_headroom"] = max(0, rename_reserve - non_margin)
+        budget["peak_additional_bytes"] += budget["components"]["rename_owner_headroom"]
+        budget.update(direction=direction, evidence="Verified frozen mappings, journal bindings and exact current/before/staged files",
+                      approval_id=approval_id, operation=operation)
+        for reference, fingerprint in snapshots.items():
+            if _stat(_file(project, reference)) != fingerprint:
+                raise ValueError("Recovery evidence changed during capacity calculation")
+        return budget
+
+
+def verify_recovery_transform(project, row, stage, direction):
+    from services.migration_interface import _file
+    evidence = json.loads(row["evidence"])
+    original = _exact(project, row["source"], evidence["sha256"], reader=_file)
+    retained = _exact(project, stage + "/" + str(row["number"]) + ".before", evidence["sha256"], reader=_file)
+    installed = _exact(project, row["destination"], evidence["after_sha256"], reader=_file)
+    staged = _exact(project, stage + "/" + str(row["number"]) + ".after", evidence["after_sha256"], reader=_file)
+    state = row["state"]
+    with access._root(project) as (_project, root):
+        for reference, exists in ((row["source"], original), (stage + "/" + str(row["number"]) + ".before", retained)):
+            if exists:
+                with renames._parent(root, reference.split("/")) as (parent, name):
+                    renames._verify(parent, name, evidence, original=reference == row["source"] and state in ("planned", "intent"))
+    if state not in ("planned", "intent", "done", "undo-intent", "undone") or original == retained:
+        raise ValueError("Ambiguous or unknown recovery transformation evidence")
+    if direction == "forward":
+        if (state in ("undo-intent", "undone") or installed and (not retained or staged or state == "planned")
+                or not installed and (state == "done" or retained and not staged)):
+            raise ValueError("Transformation completion contradicts files")
+    elif (installed and (not retained or staged) or state == "undone" and (not original or installed)
+          or state == "planned" and (not original or installed)):
+        raise ValueError("Transformation reversal contradicts files")
+
+
+def _verify_recovery_outputs(project, frozen, database, tables, identity, stage, direction):
+    from services.migration_interface import _file, _evidence_database
+    operation = identity["operation"]
+    target = "data/indexes/resources.sqlite3"
+    candidate = "data/indexes/.graph-" + operation + ".sqlite3"
+    installation = database.execute("SELECT * FROM registry_install").fetchall() if "registry_install" in tables else []
+    if len(installation) > 1:
+        raise ValueError("Multiple registry installation records")
+    installation = installation[0] if installation else None
+    allowed_unsealed = {}
+    registry_pending = True
+    registry_baseline_pending = True
+    if installation is None:
+        if os.path.lexists(project / target) or os.path.lexists(project / candidate):
+            raise ValueError("Unexpected unjournaled registry output")
+    else:
+        state = installation["state"]
+        if (installation["path"] != target or installation["baseline"] != identity["identity_allocation_sha256"]
+                or state not in ("intent", "copying", "populating", "prepared", "installed", "rolled_back")):
+            raise ValueError("Registry recovery evidence differs from approval")
+        if direction == "forward" and state == "rolled_back":
+            raise ValueError("Reversed registry cannot continue forward")
+        if state in ("prepared", "installed") or installation["sha256"] is not None:
+            checksum = installation["sha256"]
+            current = _observed(project, target, {checksum}, reader=_file)
+            staged = _observed(project, candidate, {checksum}, reader=_file)
+            retained = _observed(project, stage + "/registry.after", {checksum}, reader=_file)
+            if sum(value is not None for value in (current, staged, retained)) != 1:
+                raise ValueError("Ambiguous sealed registry recovery")
+            if direction == "forward" and (retained is not None or state == "installed" and current is None):
+                raise ValueError("Registry completion contradicts files")
+            if current is not None:
+                with _evidence_database(project, target) as checked:
+                    _integrity(checked)
+                    _identity_equality(frozen, project / target)
+            registry_pending = state not in ("prepared", "installed")
+        else:
+            if os.path.lexists(project / target):
+                raise ValueError("Unexpected unsealed final registry")
+            if state == "intent" and os.path.lexists(project / candidate):
+                raise ValueError("Registry candidate has no copying intent")
+            if state in ("copying", "populating"):
+                allowed_unsealed[candidate] = identity["required_bytes"]
+            if state == "populating":
+                with _evidence_database(project, candidate) as checked:
+                    _integrity(checked)
+                    _identity_equality(frozen, project / candidate)
+                registry_baseline_pending = False
+        if direction == "forward" and database.execute("SELECT 1 FROM transforms WHERE state!='done' LIMIT 1").fetchone():
+            raise ValueError("Registry work before verified transformations")
+    planned_indexes = frozen.execute("SELECT f.* FROM files f JOIN index_transitions t USING(source) WHERE disposition='Rebuild' ORDER BY source").fetchall()
+    if len(planned_indexes) != frozen.execute("SELECT count(*) FROM files WHERE disposition='Rebuild'").fetchone()[0]:
+        raise ValueError("Missing frozen dependent-index transitions")
+    expected_sources = set()
+    output_root = "outputs/maintenance/fixture-graph-" + operation
+    for number, planned in enumerate(planned_indexes):
+        source = planned["source"]
+        expected_sources.add(source)
+        holding = output_root + "/" + str(number) + ".before"
+        staging = output_root + "/" + str(number) + ".new"
+        row = database.execute("SELECT * FROM index_outputs WHERE source=?", (source,)).fetchone() if "index_outputs" in tables else None
+        if row is None:
+            if os.path.lexists(project / holding) or os.path.lexists(project / staging):
+                raise ValueError("Unexpected unjournaled index staging")
+            if not _exact(project, source, planned["sha256"], reader=_file):
+                raise ValueError("Missing unjournaled original index")
+            continue
+        if (row["before_sha"] != planned["sha256"] or row["holding"] != holding or row["staging"] != staging
+                or row["state"] not in ("intent", "retained", "building", "built", "installed", "undone")):
+            raise ValueError("Index recovery mapping/state differs")
+        before, after = row["before_sha"], row["after_sha"]
+        current = _observed(project, source, {before, after}, reader=_file)
+        retained = _observed(project, holding, {before}, reader=_file)
+        if row["state"] == "building":
+            if current is not None or retained is None:
+                raise ValueError("Unsealed index has unexpected final/missing before-image")
+            allowed_unsealed[staging] = identity["required_bytes"]
+            staged = None
+        else:
+            staged = _observed(project, staging, {after}, reader=_file)
+        if row["state"] == "intent" and ((current == before) == (retained == before) or staged is not None):
+            raise ValueError("Ambiguous index retain intent")
+        if direction == "forward":
+            if (row["state"] == "undone" or row["state"] == "retained" and (current is not None or retained is None or staged is not None)
+                    or row["state"] in ("built", "installed") and (after is None or retained is None
+                        or (current == after) == (staged == after) or row["state"] == "installed" and current != after)):
+                raise ValueError("Index completion contradicts files")
+        elif ((current == before) == (retained == before)
+              or row["state"] == "undone" and (current != before or retained is not None)):
+            raise ValueError("Index rollback before-image evidence differs")
+    if "index_outputs" in tables:
+        if any(row[0] not in expected_sources for row in database.execute("SELECT source FROM index_outputs")):
+            raise ValueError("Unapproved index recovery row")
+        if direction == "forward" and installation is None:
+            raise ValueError("Index journal without registry installation")
+    retained_paths = set()
+    if "unsealed_outputs" in tables:
+        for row in database.execute("SELECT * FROM unsealed_outputs"):
+            source = row["source"]
+            if (not any(source == reference or source.startswith(str(Path(reference).parent) + "/." + Path(reference).name + ".")
+                        or source in {reference + suffix for suffix in ("-journal", "-wal", "-shm")} for reference in (candidate, *(output_root + "/" + str(number) + ".new" for number in range(len(planned_indexes)))))
+                    or row["holding"] != source + ".unsealed" or row["state"] not in ("intent", "retired")):
+                raise ValueError("Unapproved unsealed retention evidence")
+            current = _observed(project, source, {row["sha256"]}, reader=_file)
+            retained = _observed(project, row["holding"], {row["sha256"]}, reader=_file)
+            if (current is None) == (retained is None) or row["state"] == "retired" and current is not None:
+                raise ValueError("Repeated or contradictory unsealed retention")
+            retained_paths.add(row["holding"])
+    for reference, maximum in allowed_unsealed.items():
+        if os.path.lexists(project / reference):
+            path = _file(project, reference)
+            if path.stat().st_size > maximum:
+                raise ValueError("Unsealed output exceeds approved storage bound")
+    index_directory = project / "data/indexes"
+    if index_directory.exists():
+        for path in index_directory.iterdir():
+            if path.name.startswith("." + Path(candidate).name + ".") or path.name.startswith(Path(candidate).name + "-") or path.name == Path(candidate).name + ".unsealed":
+                reference = str(path.relative_to(project))
+                if reference not in retained_paths:
+                    raise ValueError("Unexpected registry temporary output")
+    for directory, prefix in ((project / stage, "metadata"), (project / output_root, "index")):
+        if not directory.exists():
+            continue
+        with access._root(directory):
+            for path in directory.iterdir():
+                reference = str(path.relative_to(project))
+                if reference in retained_paths:
+                    continue
+                if prefix == "metadata":
+                    parts = path.name.split(".")
+                    if len(parts) == 2 and parts[0].isdigit() and parts[1] in ("before", "after"):
+                        if database is None or database.execute("SELECT 1 FROM transforms WHERE number=?", (int(parts[0]),)).fetchone() is None:
+                            raise ValueError("Unexpected metadata staging row")
+                    elif path.name == "registry.after":
+                        if installation is None or installation["sha256"] is None:
+                            raise ValueError("Unsealed registry reversal output")
+                        _observed(project, reference, {installation["sha256"]}, reader=_file)
+                    elif path.name == "context.after":
+                        reversal = database.execute("SELECT * FROM context_reversal").fetchall() if "context_reversal" in tables else []
+                        if len(reversal) != 1 or reversal[0]["holding"] != reference or reversal[0]["state"] not in ("intent", "retired"):
+                            raise ValueError("Missing context reversal evidence")
+                        _observed(project, reference, {reversal[0]["sha256"]}, reader=_file)
+                    elif path.name == "historical-run.after":
+                        run = frozen.execute("SELECT value FROM meta WHERE key='generation_run_plan'").fetchone()
+                        if run is None:
+                            raise ValueError("Unexpected historical-run reversal output")
+                        _observed(project, reference, {json.loads(run[0])["wrapper_sha256"]}, reader=_file)
+                    else:
+                        raise ValueError("Unexpected metadata temporary output")
+                else:
+                    if path.name not in {str(number) + suffix for number in range(len(planned_indexes)) for suffix in (".before", ".new")}:
+                        raise ValueError("Unexpected index temporary output")
+    return registry_pending, registry_baseline_pending
+
+
+def _exact(project, reference, checksum, *, reader=None):
     relative_path(project, reference)
     path = project / reference
     if not os.path.lexists(path):
         return False
-    path = locations.project_file(project, reference)
+    path = (reader or locations.project_file)(project, reference)
+    before = path.stat()
     if path.stat().st_nlink != 1 or digest(path) != checksum:
         raise ValueError("Changed content or unexpected recovery artifact: " + reference)
+    if reader is not None:
+        after = reader(project, reference).stat()
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink", "st_mode")
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise ValueError("Recovery file changed during verification")
     return True
 
 
@@ -140,7 +486,7 @@ def _relocate(project, source, destination, checksum):
 
 
 def _handoff(owner, plan, checksum, revision, clients_stopped, *, verify_resources=True):
-    state = owner.require_fixture_renames()
+    state = owner.require_migration_plan(plan, checksum, revision)
     check_quiescence(owner, clients_stopped=clients_stopped)
     project = Path(state["project"])
     path, reference, fingerprint = renames._plan(project, plan, checksum, revision)
@@ -260,7 +606,7 @@ def transform_fixture_metadata(owner, plan, *, approved_digest, plan_identity, c
             if row is None:
                 break
             previous = row["number"]
-            owner.require_fixture_renames()
+            owner.require_migration()
             evidence = json.loads(row["evidence"])
             before = str((stage / (str(previous) + ".before")).relative_to(project))
             after = str((stage / (str(previous) + ".after")).relative_to(project))
@@ -585,7 +931,7 @@ def rebuild_fixture_indexes(owner, plan, *, approved_digest, plan_identity, clie
                 _commit(database, journal.parent, interrupt, "index-retained")
         priority = lambda item: (0 if item["source"].endswith(".revision") else 3 if item["source"].endswith("corpus_stats.json") else 1 if "/illustration/" in item["source"] else 2, item["source"])
         for row in sorted(planned, key=priority):
-            owner.require_fixture_renames()
+            owner.require_migration()
             stored = database.execute("SELECT * FROM index_outputs WHERE source=?", (row["source"],)).fetchone()
             if stored["state"] == "installed":
                 if not _exact(project, stored["source"], stored["after_sha"]):
@@ -854,7 +1200,7 @@ def install_fixture_graph(owner, plan, *, approved_digest, plan_identity, client
     result = validate_fixture_graph(owner, plan, **arguments)
     if not result["graph_accepted"]:
         raise ValueError("Graph validation failed: " + json.dumps(result))
-    state = owner.require_fixture_renames()
+    state = owner.require_migration_plan(plan, approved_digest, plan_identity)
     journal = Path(state["project"]) / access.CONTROL / ("graph-" + state["operation"] + ".sqlite3")
     project = Path(state["project"])
     context = {"version": 1, "project": str(project), "device": state["device"], "inode": state["inode"],
@@ -893,13 +1239,19 @@ def install_fixture_graph(owner, plan, *, approved_digest, plan_identity, client
     return result
 
 
-def _observed(project, reference, allowed):
+def _observed(project, reference, allowed, *, reader=None):
     if not os.path.lexists(project / reference):
         return None
-    path = locations.project_file(project, reference)
+    path = (reader or locations.project_file)(project, reference)
+    before = path.stat()
     checksum = digest(path)
     if path.stat().st_nlink != 1 or checksum not in allowed:
         raise ValueError("Unexpected or modified rollback content: " + reference)
+    if reader is not None:
+        after = reader(project, reference).stat()
+        fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink", "st_mode")
+        if any(getattr(before, field) != getattr(after, field) for field in fields):
+            raise ValueError("Recovery output changed during verification")
     return checksum
 
 

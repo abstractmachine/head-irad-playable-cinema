@@ -9907,6 +9907,8 @@ def cmd_migration(args):
 
     if args.migration_action not in ("status", "prepare"):
         print({
+            "approve": "Approval records only the reviewed identity. It does not start migration or enter maintenance.",
+            "cancel": "Cancellation permanently retires an unused approval. It does not rollback a consumed migration.",
             "start": "Starting closes Crossing, moves mapped files and installs approved metadata, registry and indexes.",
             "resume": "Resuming reconciles retained journals and continues only verified work.",
             "rollback": "Rollback reverses verified graph changes before file moves. It never overwrites or restores automatically.",
@@ -9980,10 +9982,12 @@ def build_parser():
     from services.migration_interface import PLAN, PLAN_DIGEST
 
     migration_sub = p_migration.add_subparsers(dest="migration_action", required=True)
-    for action in ("status", "prepare", "start", "resume", "rollback", "validate", "accept", "release"):
+    for action in ("status", "prepare", "approve", "cancel", "start", "resume", "rollback", "validate", "accept", "release"):
         command = migration_sub.add_parser(action, help={
             "status": "Read durable migration state without changing files",
             "prepare": "Check bounded readiness without entering maintenance",
+            "approve": "Record a reviewed exact approval without starting migration",
+            "cancel": "Permanently retire an unused exact approval",
             "start": "Close Crossing and install the approved layout",
             "resume": "Reconcile journals and continue an interrupted installation",
             "rollback": "Reverse only verified changes; never restore automatically",
@@ -9998,6 +10002,11 @@ def build_parser():
         command.add_argument("--json", action="store_true", help="Print structured results")
         if action not in ("status", "prepare"):
             command.add_argument("--confirm", action="store_true", help="Explicitly confirm this action after reviewing its effects")
+        if action in ("approve", "cancel"):
+            command.add_argument("--reviewed-identity-sha256", required=True, help="Exact proposed identity seal independently reviewed by the operator")
+        if action == "approve":
+            command.add_argument("--operator", required=True, help="Name of the accountable approving operator")
+        if action not in ("status", "prepare", "approve", "cancel"):
             command.add_argument("--clients-stopped", action="store_true", help="Confirm all Crossing windows and project-writing jobs are stopped")
         command.set_defaults(func=cmd_migration)
 

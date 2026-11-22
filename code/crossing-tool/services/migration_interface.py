@@ -103,9 +103,11 @@ def _backup(project):
 
 
 def prepare(project, plan, checksum):
+    from services.migration_authorization import test_target
     project = Path(project)
     fixture = _fixture(project)
-    if not fixture and (project != PROJECT or str(plan.relative_to(project)) != PLAN or checksum != PLAN_DIGEST):
+    test = test_target(project)
+    if not fixture and not test and (project != PROJECT or str(plan.relative_to(project)) != PLAN or checksum != PLAN_DIGEST):
         raise ValueError("Only the exact Dead Crossing project and frozen Stage 2B.3d plan are approved")
     path, reference, fingerprint = renames._plan(project, plan, checksum, "2B.3d")
     with _evidence_database(project, reference) as database:
@@ -117,13 +119,13 @@ def prepare(project, plan, checksum):
         preparation = _file(project, preparation_reference)
         allocation_stat = _stat(preparation)
         expected = metadata["inputs"][preparation_reference]
-        if not fixture and (preparation_reference != PREPARATION or expected != PREPARATION_DIGEST):
+        if not fixture and not test and (preparation_reference != PREPARATION or expected != PREPARATION_DIGEST):
             raise ValueError("Approved canonical identity allocation differs")
         if digest(preparation) != expected:
             raise ValueError("Frozen canonical identity allocation changed")
         if allocation_stat != _stat(preparation) or list(fingerprint) != _stat(path):
             raise ValueError("Frozen input changed during preparation")
-        counts = {row[0]: row[1] for row in database.execute("SELECT disposition,count(*) FROM files GROUP BY disposition") } if fixture else {
+        counts = {row[0]: row[1] for row in database.execute("SELECT disposition,count(*) FROM files GROUP BY disposition") } if fixture or test else {
             "Move": 669634, "Transform": 668681, "Rebuild": 15, "identities": 668050}
     with access._root(project) as (project, root):
         identity = access._identity(project, root)
@@ -132,6 +134,10 @@ def prepare(project, plan, checksum):
     inodes = capacity.f_favail
     required = 0 if fixture else REQUIRED_BYTES
     required_inodes = 0 if fixture else REQUIRED_INODES
+    if test:
+        from services.resource_graph import graph_storage_budget
+        budget = graph_storage_budget(path, preparation_bytes=preparation.stat().st_size)
+        required, required_inodes = budget["peak_additional_bytes"], budget["additional_inode_bound"]
     blockers = []
     if available < required or inodes < required_inodes:
         blockers.append("Insufficient additional bytes or inodes; no cleanup is authorized")
@@ -141,9 +147,10 @@ def prepare(project, plan, checksum):
         blockers.append("Recovery source check failed: " + str(error))
         recovery = {"error": str(error)}
     binding = {**identity, "plan": reference, "plan_sha256": checksum, "plan_stat": list(fingerprint),
+               "plan_revision": "2B.3d", "identity_allocation": preparation_reference,
                "identity_allocation_sha256": expected, "allocation_stat": allocation_stat,
                "recovery_source": recovery, "fixture_only": fixture}
-    if not fixture:
+    if not fixture and not test:
         blockers.append("Production execution disabled; separate reviewed enabling authorization required")
     return {"project": str(project), "plan": "Stage 2B.3d", "plan_sha256": checksum,
             "operations": counts, "available_bytes": available, "required_bytes": required,
@@ -180,16 +187,25 @@ def check_authorization(actual, approved, *, confirmed=False):
 
 
 def status(project, plan, checksum, operation):
+    from services.migration_authorization import inspect, test_target
     state = access.status(project)
     result = {"project": str(project), "plan": "Stage 2B.3d", "plan_sha256": checksum,
               "maintenance": state["state"], "phase": "Not started", "status": "Stopped",
               "progress": {}, "recovery_actions": "Prepare; production execution remains disabled",
               "blocking_conditions": [], "production_execution": "disabled"}
     result.update(elapsed_seconds=0, latest_durable_progress=None, activity="Stopped")
+    result["approval"] = inspect(project)
+    result["workflow_state"] = {"missing": "Prepared but unauthorized", "approved": "Approved but not started",
+        "expired": "Expired unused approval", "cancelled": "Unused approval permanently cancelled",
+        "running": "Consumed operation; inspect maintenance and progress", "completed": "Completed and reopened",
+        "rolled-back": "Rolled back; closed for manual review", "restore-required": "Manual intervention required",
+        "blocked": "Authorization evidence blocked; manual review required"}[result["approval"]["state"]]
+    if result["approval"].get("operation") and result["approval"]["operation"] != operation:
+        result["blocking_conditions"].append("Requested operation differs from the durable approval")
     counts = {}
     if project == PROJECT and str(plan.relative_to(project)) == PLAN and checksum == PLAN_DIGEST:
         counts = {"Move": 669634, "Transform": 668681, "Rebuild": 15}
-    elif _fixture(project):
+    elif _fixture(project) or test_target(project):
         with _evidence_database(project, str(plan.relative_to(project))) as frozen:
             counts = {row[0]: row[1] for row in frozen.execute("SELECT disposition,count(*) FROM files GROUP BY disposition")}
     for table, disposition in (("moves", "Move"), ("transforms", "Transform"), ("index_outputs", "Rebuild")):
@@ -367,13 +383,23 @@ def dispatch(args, *, emit=None, interrupt=None):
     if action == "status":
         return status(project, plan, args.plan_sha256, operation)
     if action == "prepare":
-        return prepare(project, plan, args.plan_sha256)
+        from services.migration_authorization import proposal
+        return proposal(project, plan, args.plan_sha256, operation)
+    if action in ("approve", "cancel"):
+        from services.migration_authorization import approve, cancel
+        if action == "approve":
+            return approve(project, plan, args.plan_sha256, operation, args.reviewed_identity_sha256,
+                           confirmed=args.confirm, operator=args.operator, interrupt=interrupt)
+        return cancel(project, operation, args.reviewed_identity_sha256, confirmed=args.confirm,
+                  plan=plan, checksum=args.plan_sha256, interrupt=interrupt)
     if not args.confirm or not args.clients_stopped:
         raise access.MaintenanceError("Review this action, then provide --confirm and --clients-stopped; no action taken")
     if not _fixture(project):
-        if project != PROJECT or str(plan.relative_to(project)) != PLAN or args.plan_sha256 != PLAN_DIGEST:
-            raise ValueError("Wrong project or frozen plan; no action taken")
-        raise access.IncompleteCoverage("Production execution disabled pending separate human review; no maintenance entered")
+        from services.migration_authorization import execute
+        progress = Progress(project, plan, args.plan_sha256, operation, emit or (lambda value: None), interrupt)
+        with progress.reporting():
+            return execute(project, plan, args.plan_sha256, operation, action, confirmed=args.confirm,
+                           clients_stopped=args.clients_stopped, interrupt=progress)
     project, _binding = integrated._binding(project, plan, args.plan_sha256, "2B.3d", operation)
     arguments = {"approved_digest": args.plan_sha256, "plan_identity": "2B.3d", "operation_id": operation,
                  "approved": True, "clients_stopped": True}

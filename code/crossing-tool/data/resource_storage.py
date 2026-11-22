@@ -343,7 +343,7 @@ class ResourceStore:
         from tool.project_access import _InspectionOwner
         if not isinstance(owner, _InspectionOwner):
             raise ValueError("Live exclusive fixture owner required")
-        state = owner.require_fixture_renames()
+        state = owner.require_migration()
         if state["project"] != str(self.project):
             raise ValueError("Fixture import project differs")
         return state
