@@ -747,20 +747,27 @@ def test_preflight_operator_known_jobs_and_descendants(tmp_path, preflight_proc)
             check_quiescence(owner, clients_stopped=True, known_pids=[123])
 
 
-def test_preflight_current_uv_launcher_is_not_an_independent_client(tmp_path, preflight_proc):
+@pytest.fixture(params=["entrypoint", "script"])
+def launcher_form(request):
+    return request.param
+
+
+def test_preflight_current_uv_launcher_is_not_an_independent_client(tmp_path, preflight_proc, launcher_form):
     from services import maintenance_preflight
 
-    _uv_controller_fixture(preflight_proc, tmp_path)
+    _uv_controller_fixture(preflight_proc, tmp_path, launcher_form)
     result = maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
     assert result["mutation_authorized"] is False
 
 
-def _uv_controller_fixture(root, project):
+def _uv_controller_fixture(root, project, launcher_form):
     arguments = ["migration", "start", "--project", str(project)]
-    parent = _process_fixture(root, 123, ["uv", "run", "crossing", *arguments], project)
+    command = ["crossing"] if launcher_form == "entrypoint" else ["python", "cli.py"]
+    target = "/fixture/bin/crossing" if launcher_form == "entrypoint" else "cli.py"
+    parent = _process_fixture(root, 123, ["uv", "run", *command, *arguments], project)
     path = parent / "stat"
     path.write_text(path.read_text().rsplit(" ", 1)[0] + " 1")
-    controller = _process_fixture(root, os.getpid(), ["python3", "/fixture/bin/crossing", *arguments],
+    controller = _process_fixture(root, os.getpid(), ["python3", target, *arguments],
                                   project, parent=123)
     return parent, controller
 
@@ -772,35 +779,41 @@ def _uv_controller_fixture(root, project):
     (["python3", "worker.py"], os.getpid()),
     (["crossing", "engraving", "local-batch"], 123),
 ])
-def test_preflight_current_uv_launcher_preserves_independent_jobs(tmp_path, preflight_proc, arguments, parent):
+def test_preflight_current_uv_launcher_preserves_independent_jobs(tmp_path, preflight_proc, arguments, parent, launcher_form):
     from services import maintenance_preflight
 
-    _uv_controller_fixture(preflight_proc, tmp_path)
+    _uv_controller_fixture(preflight_proc, tmp_path, launcher_form)
     _process_fixture(preflight_proc, 124, arguments, tmp_path, parent=parent)
     with pytest.raises(access.MaintenanceBusy, match="remain: 124"):
         maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
 
 
-def test_preflight_current_uv_launcher_explicit_operator_pid_still_blocks(tmp_path, preflight_proc):
+def test_preflight_current_uv_launcher_explicit_operator_pid_still_blocks(tmp_path, preflight_proc, launcher_form):
     from services import maintenance_preflight
 
-    _uv_controller_fixture(preflight_proc, tmp_path)
+    _uv_controller_fixture(preflight_proc, tmp_path, launcher_form)
     with pytest.raises(access.MaintenanceBusy, match="remain: 123"):
         maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[123])
 
 
-@pytest.mark.parametrize("changed", ["shell", "arguments", "target", "started"])
-def test_preflight_current_uv_launcher_requires_exact_invocation(tmp_path, preflight_proc, changed):
+@pytest.mark.parametrize("changed", ["shell", "arguments", "target", "started", "relationship", "python"])
+def test_preflight_current_uv_launcher_requires_exact_invocation(tmp_path, preflight_proc, changed, launcher_form):
     from services import maintenance_preflight
 
-    parent, controller = _uv_controller_fixture(preflight_proc, tmp_path)
+    parent, controller = _uv_controller_fixture(preflight_proc, tmp_path, launcher_form)
     if changed == "started":
         path = parent / "stat"
         path.write_text(path.read_text().rsplit(" ", 1)[0] + " " + str(os.getpid() * 10 + 1))
     elif changed == "arguments":
         (controller / "cmdline").write_bytes(b"python3\0/fixture/bin/crossing\0migration\0resume\0")
     elif changed == "target":
-        (parent / "cmdline").write_bytes((parent / "cmdline").read_bytes().replace(b"crossing\0", b"/other/bin/crossing\0"))
+        target = b"crossing\0" if launcher_form == "entrypoint" else b"cli.py\0"
+        (parent / "cmdline").write_bytes((parent / "cmdline").read_bytes().replace(target, b"/other/bin/" + target))
+    elif changed == "relationship":
+        path = controller / "stat"
+        path.write_text(path.read_text().replace(") S 123 ", ") S 1 "))
+    elif changed == "python":
+        (controller / "cmdline").write_bytes((controller / "cmdline").read_bytes().replace(b"python3\0", b"unrelated\0"))
     else:
         (parent / "cmdline").write_bytes(b"bash\0-c\0exec /fixture/bin/crossing\0")
     with pytest.raises(access.MaintenanceBusy, match="remain: 123"):
@@ -809,10 +822,10 @@ def test_preflight_current_uv_launcher_requires_exact_invocation(tmp_path, prefl
 
 @pytest.mark.parametrize("target", ["parent", "controller"])
 @pytest.mark.parametrize("changed", ["pid_reuse", "exec", "unreadable"])
-def test_preflight_current_uv_launcher_rechecks_both_identities(tmp_path, preflight_proc, monkeypatch, target, changed):
+def test_preflight_current_uv_launcher_rechecks_both_identities(tmp_path, preflight_proc, monkeypatch, target, changed, launcher_form):
     from services import maintenance_preflight
 
-    parent, controller = _uv_controller_fixture(preflight_proc, tmp_path)
+    parent, controller = _uv_controller_fixture(preflight_proc, tmp_path, launcher_form)
     directory = parent if target == "parent" else controller
     process = maintenance_preflight._process
     calls = 0
@@ -861,6 +874,65 @@ print(json.dumps({'parent': parent, 'classified': preflight._known_client(parent
     assert observed["classified"] is True
     assert observed["result"]["checked_processes"] == 2
     assert observed["result"]["mutation_authorized"] is False
+
+
+@pytest.mark.parametrize("case", ["clean", "explicit", "independent"])
+def test_preflight_current_uv_launcher_actual_wrapper(tmp_path, case):
+    source = Path(__file__).resolve().parents[1]
+    scripts = tmp_path / "scripts"
+    scripts.mkdir()
+    wrapper = scripts / "crossing"
+    shutil.copy2(source / "scripts/crossing", wrapper)
+    probe = tmp_path / "cli.py"
+    probe.write_text("case = " + repr(case) + "\n" + """
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+from services import maintenance_preflight as preflight
+from tool.project_access import MaintenanceBusy
+
+controller = preflight._process(Path('/proc') / str(os.getpid()))
+parent = preflight._process(Path('/proc') / str(os.getppid()))
+processes = {item['pid']: item for item in (controller, parent)}
+worker = None
+if case == 'independent':
+    worker = subprocess.Popen([sys.executable, '-c', "import sys; print('ready', flush=True); sys.stdin.read()"],
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    assert worker.stdout.readline().strip() == 'ready'
+    processes[worker.pid] = preflight._process(Path('/proc') / str(worker.pid))
+preflight._snapshot = lambda known_pids, diagnostics=None: processes
+observed = {'parent': parent, 'controller': controller, 'error': None}
+known_pids = [parent['pid']] if case == 'explicit' else []
+try:
+    observed['result'] = preflight.check_known_clients(Path.cwd(), clients_stopped=True, known_pids=known_pids)
+except MaintenanceBusy as error:
+    observed['error'] = str(error)
+finally:
+    if worker is not None:
+        observed['independent_pid'] = worker.pid
+        worker.stdin.close()
+        worker.wait(timeout=10)
+        worker.stdout.close()
+print(json.dumps(observed))
+""")
+    environment = {**os.environ, "HOME": str(tmp_path), "PYTHONPATH": str(source)}
+    environment.pop("CROSSING_PROJECT", None)
+    result = subprocess.run([str(wrapper), "migration", "prepare", "--project", str(tmp_path)],
+                            cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30, check=True)
+    observed = json.loads(result.stdout)
+    print(result.stdout)
+    assert observed["parent"]["arguments"][1:4] == ["run", "python", "cli.py"]
+    assert observed["controller"]["arguments"][1] == "cli.py"
+    assert observed["controller"]["parent"] == observed["parent"]["pid"]
+    assert observed["parent"]["started"] <= observed["controller"]["started"]
+    if case == "clean":
+        assert observed["error"] is None
+        assert observed["result"]["mutation_authorized"] is False
+    else:
+        blocked = observed["parent"]["pid"] if case == "explicit" else observed["independent_pid"]
+        assert observed["error"] == f"Known Crossing clients or descendants remain: {blocked}"
 
 
 @pytest.mark.parametrize("script", ["services/engraving_local_pipeline.py", "scripts/fixture_job.py"])

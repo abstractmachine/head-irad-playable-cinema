@@ -203,11 +203,18 @@ def _controller_launcher(processes):
     arguments, launched = parent["arguments"], controller["arguments"]
     if (len(arguments) < 3 or len(launched) < 2
             or Path(arguments[0]).name != "uv" or arguments[1] != "run"
-            or Path(arguments[2]).name != "crossing"
             or not Path(launched[0]).name.startswith("python")
-            or Path(launched[1]).name != "crossing"
-            or arguments[2] not in ("crossing", launched[1])
-            or arguments[3:] != launched[2:] or parent["started"] > controller["started"]):
+            or parent["started"] > controller["started"]):
+        return None
+    if (Path(launched[1]).name == "crossing"
+            and arguments[2] in ("crossing", launched[1])):
+        forwarded = arguments[3:]
+    elif (Path(launched[1]).name == "cli.py" and len(arguments) >= 4
+            and arguments[2] == "python" and arguments[3] == launched[1]):
+        forwarded = arguments[4:]
+    else:
+        return None
+    if forwarded != launched[2:]:
         return None
     try:
         for process in (controller, parent):
