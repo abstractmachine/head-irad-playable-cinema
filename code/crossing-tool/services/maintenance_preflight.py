@@ -193,6 +193,31 @@ def _known_client(process, project):
     return project_context and (executable.startswith("python") or executable in {"ffmpeg", "ffplay", "mpv", "vlc"})
 
 
+def _controller_launcher(processes):
+    controller = processes.get(os.getpid())
+    if not controller or controller.get("partial_inspection"):
+        return None
+    parent = processes.get(controller["parent"])
+    if not parent or parent.get("partial_inspection"):
+        return None
+    arguments, launched = parent["arguments"], controller["arguments"]
+    if (len(arguments) < 3 or len(launched) < 2
+            or Path(arguments[0]).name != "uv" or arguments[1] != "run"
+            or Path(arguments[2]).name != "crossing"
+            or not Path(launched[0]).name.startswith("python")
+            or Path(launched[1]).name != "crossing"
+            or arguments[2] not in ("crossing", launched[1])
+            or arguments[3:] != launched[2:] or parent["started"] > controller["started"]):
+        return None
+    try:
+        for process in (controller, parent):
+            if _process(_PROC_ROOT / str(process["pid"])) != process:
+                return None
+    except (OSError, ValueError, IndexError, UnicodeError, MaintenanceError):
+        return None
+    return parent["pid"]
+
+
 def check_known_clients(project, *, clients_stopped=False, known_pids=()):
     """Refuse known Crossing jobs; unrelated survey failures are diagnostic."""
     if clients_stopped is not True:
@@ -203,8 +228,9 @@ def check_known_clients(project, *, clients_stopped=False, known_pids=()):
         raise MaintenanceError("Known client PIDs must be bounded positive non-controller identities")
     diagnostics = []
     processes = _snapshot(known_pids, diagnostics=diagnostics)
+    launcher = _controller_launcher(processes)
     clients = {pid for pid, process in processes.items() if pid != os.getpid()
-               and (pid in known_pids or _known_client(process, project))}
+               and (pid in known_pids or pid != launcher and _known_client(process, project))}
     pending = list(clients)
     while pending:
         parent = pending.pop()

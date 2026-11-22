@@ -747,6 +747,122 @@ def test_preflight_operator_known_jobs_and_descendants(tmp_path, preflight_proc)
             check_quiescence(owner, clients_stopped=True, known_pids=[123])
 
 
+def test_preflight_current_uv_launcher_is_not_an_independent_client(tmp_path, preflight_proc):
+    from services import maintenance_preflight
+
+    _uv_controller_fixture(preflight_proc, tmp_path)
+    result = maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+    assert result["mutation_authorized"] is False
+
+
+def _uv_controller_fixture(root, project):
+    arguments = ["migration", "start", "--project", str(project)]
+    parent = _process_fixture(root, 123, ["uv", "run", "crossing", *arguments], project)
+    path = parent / "stat"
+    path.write_text(path.read_text().rsplit(" ", 1)[0] + " 1")
+    controller = _process_fixture(root, os.getpid(), ["python3", "/fixture/bin/crossing", *arguments],
+                                  project, parent=123)
+    return parent, controller
+
+
+@pytest.mark.parametrize("arguments,parent", [
+    (["crossing", "index", "illustration"], 1),
+    (["uv", "run", "crossing", "migration", "start"], 1),
+    (["python3", "-m", "mcp_server.mcp_server"], 1),
+    (["python3", "worker.py"], os.getpid()),
+    (["crossing", "engraving", "local-batch"], 123),
+])
+def test_preflight_current_uv_launcher_preserves_independent_jobs(tmp_path, preflight_proc, arguments, parent):
+    from services import maintenance_preflight
+
+    _uv_controller_fixture(preflight_proc, tmp_path)
+    _process_fixture(preflight_proc, 124, arguments, tmp_path, parent=parent)
+    with pytest.raises(access.MaintenanceBusy, match="remain: 124"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+def test_preflight_current_uv_launcher_explicit_operator_pid_still_blocks(tmp_path, preflight_proc):
+    from services import maintenance_preflight
+
+    _uv_controller_fixture(preflight_proc, tmp_path)
+    with pytest.raises(access.MaintenanceBusy, match="remain: 123"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True, known_pids=[123])
+
+
+@pytest.mark.parametrize("changed", ["shell", "arguments", "target", "started"])
+def test_preflight_current_uv_launcher_requires_exact_invocation(tmp_path, preflight_proc, changed):
+    from services import maintenance_preflight
+
+    parent, controller = _uv_controller_fixture(preflight_proc, tmp_path)
+    if changed == "started":
+        path = parent / "stat"
+        path.write_text(path.read_text().rsplit(" ", 1)[0] + " " + str(os.getpid() * 10 + 1))
+    elif changed == "arguments":
+        (controller / "cmdline").write_bytes(b"python3\0/fixture/bin/crossing\0migration\0resume\0")
+    elif changed == "target":
+        (parent / "cmdline").write_bytes((parent / "cmdline").read_bytes().replace(b"crossing\0", b"/other/bin/crossing\0"))
+    else:
+        (parent / "cmdline").write_bytes(b"bash\0-c\0exec /fixture/bin/crossing\0")
+    with pytest.raises(access.MaintenanceBusy, match="remain: 123"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+@pytest.mark.parametrize("target", ["parent", "controller"])
+@pytest.mark.parametrize("changed", ["pid_reuse", "exec", "unreadable"])
+def test_preflight_current_uv_launcher_rechecks_both_identities(tmp_path, preflight_proc, monkeypatch, target, changed):
+    from services import maintenance_preflight
+
+    parent, controller = _uv_controller_fixture(preflight_proc, tmp_path)
+    directory = parent if target == "parent" else controller
+    process = maintenance_preflight._process
+    calls = 0
+
+    def changing(source):
+        nonlocal calls
+        if source == directory:
+            calls += 1
+            if calls == 2:
+                if changed == "unreadable":
+                    raise PermissionError("launcher identity unavailable")
+                if changed == "pid_reuse":
+                    path = source / "stat"
+                    path.write_text(path.read_text().rsplit(" ", 1)[0] + " 99999999")
+                else:
+                    (source / "cmdline").write_bytes(b"python3\0cli.py\0index\0")
+        return process(source)
+
+    monkeypatch.setattr(maintenance_preflight, "_process", changing)
+    with pytest.raises(access.MaintenanceBusy, match="remain: 123"):
+        maintenance_preflight.check_known_clients(tmp_path, clients_stopped=True)
+
+
+def test_preflight_current_uv_launcher_real_subprocess(tmp_path):
+    source = Path(__file__).resolve().parents[1]
+    script = tmp_path / "crossing"
+    script.write_text(f"#!{sys.executable}\n" + """
+import json
+import os
+from pathlib import Path
+from services import maintenance_preflight as preflight
+
+controller = preflight._process(Path('/proc') / str(os.getpid()))
+parent = preflight._process(Path('/proc') / str(os.getppid()))
+preflight._snapshot = lambda known_pids, diagnostics=None: {item['pid']: item for item in (controller, parent)}
+result = preflight.check_known_clients(Path.cwd(), clients_stopped=True)
+print(json.dumps({'parent': parent, 'classified': preflight._known_client(parent, Path.cwd()), 'result': result}))
+""")
+    script.chmod(0o700)
+    environment = {**os.environ, "PYTHONPATH": str(source), "HOME": str(tmp_path)}
+    environment.pop("CROSSING_PROJECT", None)
+    result = subprocess.run([shutil.which("uv"), "run", str(script), "migration", "start", "--project", str(tmp_path)],
+                            cwd=tmp_path, env=environment, capture_output=True, text=True, timeout=30, check=True)
+    observed = json.loads(result.stdout)
+    assert Path(observed["parent"]["arguments"][0]).name == "uv"
+    assert observed["classified"] is True
+    assert observed["result"]["checked_processes"] == 2
+    assert observed["result"]["mutation_authorized"] is False
+
+
 @pytest.mark.parametrize("script", ["services/engraving_local_pipeline.py", "scripts/fixture_job.py"])
 def test_preflight_recognizes_checkout_python_jobs_from_other_cwds(tmp_path, preflight_proc, script):
     from services.maintenance_preflight import check_quiescence
