@@ -12,6 +12,7 @@ from pathlib import Path
 import re
 import sqlite3
 import stat
+import threading
 import time
 
 from data.resource_storage import digest, relative_path
@@ -21,6 +22,19 @@ from tool import project_access as access
 
 
 _FIELDS = ("source", "destination", "size", "mtime_ns", "ctime_ns", "inode", "device", "links", "sha256", "instance_id", "mode", "owner")
+_JOURNAL_GATE = threading.Lock()
+
+
+@contextmanager
+def journal_window(*, writing=False):
+    if writing:
+        _JOURNAL_GATE.acquire()
+    elif not _JOURNAL_GATE.acquire(blocking=False):
+        raise RuntimeError("Relocation journal checkpoint busy; try status again")
+    try:
+        yield
+    finally:
+        _JOURNAL_GATE.release()
 
 
 def _event(interrupt, phase):
@@ -154,11 +168,12 @@ def _commit(database, parent, interrupt, phase):
 
 
 def _record(database, parent, source, state, interrupt, phase, parents=None):
-    database.execute("BEGIN IMMEDIATE")
-    database.execute("UPDATE moves SET state=?,parents=coalesce(?,parents) WHERE source=?",
-                     (state, _encode(parents) if parents is not None else None, source))
-    database.execute("INSERT INTO events(source,state,recorded) VALUES(?,?,?)", (source, state, time.time()))
-    _commit(database, parent, interrupt, phase)
+    with journal_window(writing=True):
+        database.execute("BEGIN IMMEDIATE")
+        database.execute("UPDATE moves SET state=?,parents=coalesce(?,parents) WHERE source=?",
+                         (state, _encode(parents) if parents is not None else None, source))
+        database.execute("INSERT INTO events(source,state,recorded) VALUES(?,?,?)", (source, state, time.time()))
+        _commit(database, parent, interrupt, phase)
 
 
 def _plan(project, plan, approved_digest, plan_identity):
@@ -357,38 +372,40 @@ def execute(owner, plan, *, approved_digest, plan_identity, clients_stopped=Fals
                       "token": state["token"], "operation": state["operation"], "plan": plan_reference,
                       "plan_identity": plan_identity, "plan_digest": approved_digest, "plan_stat": list(plan_stat),
                       "journal_inode": info.st_ino, "journal_device": info.st_dev, "moves": count}
-            database = sqlite3.connect(f"file:/proc/self/fd/{parent}/{name}?mode=rw", uri=True)
-            database.row_factory = sqlite3.Row
+            database = None
             try:
-                database.execute("PRAGMA synchronous=FULL")
-                database.execute("PRAGMA journal_mode=DELETE")
-                if fresh:
-                    database.executescript("CREATE TABLE meta(payload TEXT NOT NULL,direction TEXT NOT NULL); CREATE TABLE moves(source TEXT PRIMARY KEY,destination TEXT UNIQUE NOT NULL,frozen TEXT NOT NULL,state TEXT NOT NULL,parents TEXT); CREATE TABLE events(sequence INTEGER PRIMARY KEY,source TEXT,state TEXT NOT NULL,recorded REAL NOT NULL); CREATE INDEX events_source ON events(source,sequence);")
-                    database.execute("INSERT INTO meta VALUES(?,'forward')", (_encode(header),))
-                    for row in _rows(frozen):
-                        _validate_row(project, row, plan_reference)
-                        database.execute("INSERT INTO moves VALUES(?,?,?,'planned',NULL)", (row["source"], row["destination"], _encode(row)))
-                    _commit(database, parent, interrupt, "prepared")
-                if database.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
-                    raise ValueError("Journal integrity failure")
-                headers = database.execute("SELECT * FROM meta").fetchall()
-                if len(headers) != 1 or json.loads(headers[0]["payload"]) != header or headers[0]["direction"] not in ("forward", "rollback"):
-                    raise ValueError("Journal identity or plan binding mismatch")
-                rows = database.execute("SELECT * FROM moves ORDER BY source")
-                for actual, expected in zip(rows, _rows(frozen), strict=True):
-                    if actual["source"] != expected["source"] or actual["destination"] != expected["destination"] or json.loads(actual["frozen"]) != expected:
-                        raise ValueError("Journal mapping differs from frozen plan")
-                if action == "forward" and headers[0]["direction"] != "forward":
-                    raise ValueError("Rollback operation cannot resume forward")
-                if not fresh:
-                    final = "undone" if action == "rollback" else "done"
-                    pending = database.execute("SELECT count(*),coalesce(sum(length(CAST(source AS BLOB))+length(CAST(destination AS BLOB))),0),coalesce(sum(length(destination)-length(replace(destination,'/',''))),0) FROM moves WHERE state!=?", (final,)).fetchone()
-                    missing = remaining_directory_count(root, database, reverse=action == "rollback")
-                    reserve = _capacity(root, pending[0], pending[1], missing)
-                if action == "rollback" and headers[0]["direction"] == "forward":
-                    database.execute("UPDATE meta SET direction='rollback'")
-                    _commit(database, parent, interrupt, "rollback-start")
-                check_quiescence(owner, clients_stopped=clients_stopped, known_pids=known_pids)
+                with journal_window(writing=True):
+                    database = sqlite3.connect(f"file:/proc/self/fd/{parent}/{name}?mode=rw", uri=True)
+                    database.row_factory = sqlite3.Row
+                    database.execute("PRAGMA synchronous=FULL")
+                    database.execute("PRAGMA journal_mode=DELETE")
+                    if fresh:
+                        database.executescript("CREATE TABLE meta(payload TEXT NOT NULL,direction TEXT NOT NULL); CREATE TABLE moves(source TEXT PRIMARY KEY,destination TEXT UNIQUE NOT NULL,frozen TEXT NOT NULL,state TEXT NOT NULL,parents TEXT); CREATE TABLE events(sequence INTEGER PRIMARY KEY,source TEXT,state TEXT NOT NULL,recorded REAL NOT NULL); CREATE INDEX events_source ON events(source,sequence);")
+                        database.execute("INSERT INTO meta VALUES(?,'forward')", (_encode(header),))
+                        for row in _rows(frozen):
+                            _validate_row(project, row, plan_reference)
+                            database.execute("INSERT INTO moves VALUES(?,?,?,'planned',NULL)", (row["source"], row["destination"], _encode(row)))
+                        _commit(database, parent, interrupt, "prepared")
+                    if database.execute("PRAGMA integrity_check").fetchone()[0] != "ok":
+                        raise ValueError("Journal integrity failure")
+                    headers = database.execute("SELECT * FROM meta").fetchall()
+                    if len(headers) != 1 or json.loads(headers[0]["payload"]) != header or headers[0]["direction"] not in ("forward", "rollback"):
+                        raise ValueError("Journal identity or plan binding mismatch")
+                    rows = database.execute("SELECT * FROM moves ORDER BY source")
+                    for actual, expected in zip(rows, _rows(frozen), strict=True):
+                        if actual["source"] != expected["source"] or actual["destination"] != expected["destination"] or json.loads(actual["frozen"]) != expected:
+                            raise ValueError("Journal mapping differs from frozen plan")
+                    if action == "forward" and headers[0]["direction"] != "forward":
+                        raise ValueError("Rollback operation cannot resume forward")
+                    if not fresh:
+                        final = "undone" if action == "rollback" else "done"
+                        pending = database.execute("SELECT count(*),coalesce(sum(length(CAST(source AS BLOB))+length(CAST(destination AS BLOB))),0),coalesce(sum(length(destination)-length(replace(destination,'/',''))),0) FROM moves WHERE state!=?", (final,)).fetchone()
+                        missing = remaining_directory_count(root, database, reverse=action == "rollback")
+                        reserve = _capacity(root, pending[0], pending[1], missing)
+                    if action == "rollback" and headers[0]["direction"] == "forward":
+                        database.execute("UPDATE meta SET direction='rollback'")
+                        _commit(database, parent, interrupt, "rollback-start")
+                    check_quiescence(owner, clients_stopped=clients_stopped, known_pids=known_pids)
                 _run_moves(owner, root, database, parent, project, plan_reference, plan_stat, action == "rollback", interrupt)
                 final = "undone" if action == "rollback" else "done"
                 if database.execute("SELECT count(*) FROM moves WHERE state!=?", (final,)).fetchone()[0]:
@@ -398,4 +415,6 @@ def execute(owner, plan, *, approved_digest, plan_identity, clients_stopped=Fals
                         "journal": str(project / access.CONTROL / journal_name), "reserve_bytes": reserve,
                         "resource_mutation_authorized": False, "graph_accepted": False}
             finally:
-                database.close()
+                if database is not None:
+                    with journal_window(writing=True):
+                        database.close()

@@ -1,9 +1,10 @@
 import json
-from contextlib import closing
+from contextlib import closing, contextmanager
 import os
 import sqlite3
 import sys
 import threading
+import traceback
 from unittest.mock import patch
 
 import pytest
@@ -18,8 +19,10 @@ from tool import project_access as access
 
 @pytest.fixture
 def sandbox_prefs(monkeypatch):
+    original = cli.prefs.get
     monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: default)
     monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: None)
+    return original
 
 
 @pytest.fixture(autouse=True)
@@ -191,6 +194,129 @@ def test_status_ignores_default_project_admission(prepared, capsys, monkeypatch)
     monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(prepared[0]))
     monkeypatch.setenv("CROSSING_PROJECT", str(prepared[0]))
     assert _run(prepared, "status", capsys)["maintenance"] == "maintenance"
+
+
+def test_status_with_real_project_preferences_while_closed(prepared, capsys, monkeypatch, sandbox_prefs, tmp_path):
+    project, plan, checksum = prepared
+    user_file = tmp_path / "user-prefs.json"
+    user_file.write_text(json.dumps({"path": str(project)}))
+    monkeypatch.setattr(cli.prefs, "_USER_FILE", user_file)
+    monkeypatch.setattr(cli.prefs, "get", sandbox_prefs)
+    access.enroll(project, approved=True)
+    with access.maintenance(project, "cli-fixture", approved=True):
+        pass
+    arguments = ["crossing", "migration", "status", "--project", str(project), "--plan", str(plan),
+                 "--plan-sha256", checksum, "--operation-id", "cli-fixture", "--json"]
+    with patch.object(sys, "argv", arguments):
+        cli.main()
+    assert json.loads(capsys.readouterr().out)["maintenance"] == "maintenance"
+    with pytest.raises(access.MaintenanceClosed):
+        with access.operation(project):
+            pytest.fail("Status reopened ordinary project admission")
+    with patch.object(sys, "argv", ["crossing", "index", "illustration"]):
+        with pytest.raises(SystemExit, match="Project access refused"):
+            cli.main()
+
+
+def test_slow_concurrent_progress_read_does_not_abort_relocation(prepared, capsys, monkeypatch):
+    original_window = interface._evidence_database
+    original_connect = sqlite3.connect
+    entered = threading.Event()
+    released = threading.Event()
+    worker = None
+    progress = interface.Progress(*prepared, "cli-fixture", lambda value: None)
+
+    @contextmanager
+    def delayed(project, reference):
+        with original_window(project, reference) as database:
+            if reference.endswith("rename-cli-fixture.sqlite3") and threading.current_thread().name == "held-progress":
+                entered.set()
+                released.wait(0.2)
+            yield database
+
+    def connect(path, *arguments, **options):
+        if str(path).startswith("file:/proc/self/fd/"):
+            options["timeout"] = 0.05
+        return original_connect(path, *arguments, **options)
+
+    def poll(event):
+        nonlocal worker
+        if event == "between-moves" and worker is None:
+            worker = threading.Thread(target=lambda: progress.report("Concurrent checkpoint"), name="held-progress")
+            worker.start()
+            assert entered.wait(5)
+
+    monkeypatch.setattr(interface, "_evidence_database", delayed)
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    args = _args(prepared, "start")
+    try:
+        result = interface.dispatch(args, interrupt=poll)
+    finally:
+        released.set()
+        if worker is not None:
+            worker.join(5)
+            assert not worker.is_alive()
+    assert result["graph_accepted"]
+    assert interface.status(*prepared, "cli-fixture")["progress"]["moves"]["completed"] == 44
+
+
+def test_progress_inside_journal_write_defers_uncommitted_counts(prepared):
+    updates = []
+    progress = interface.Progress(*prepared, "cli-fixture", updates.append)
+    boundaries = {"prepared:before-journal-sync", "intent:before-journal-sync", "completion:before-journal-sync"}
+
+    def poll(event):
+        if event in boundaries:
+            progress.report(event)
+
+    result = interface.dispatch(_args(prepared, "start"), interrupt=poll)
+    assert result["graph_accepted"]
+    assert updates
+    assert all(update["status"] == "Waiting for a readable durable checkpoint" for update in updates)
+    assert all("Relocation journal checkpoint busy" in update["detail"] for update in updates)
+    assert all("progress" not in update for update in updates)
+    assert interface.status(*prepared, "cli-fixture")["progress"]["moves"]["completed"] == 44
+
+
+@pytest.mark.parametrize("boundary", ["intent-committed", "renamed", "completion:before-journal-sync"])
+def test_exited_worker_status_and_owned_recovery_preserve_barrier(prepared, capsys, monkeypatch, tmp_path, boundary):
+    processes = tmp_path / "proc"
+    processes.mkdir()
+    monkeypatch.setattr(maintenance_preflight, "_PROC_ROOT", processes)
+    args = _args(prepared, "start")
+    child = os.fork()
+    if child == 0:
+        try:
+            def stop(event):
+                if event == boundary:
+                    os._exit(73)
+            interface.dispatch(args, interrupt=stop)
+        except BaseException:
+            traceback.print_exc()
+        os._exit(91)
+    _, result = os.waitpid(child, 0)
+    assert os.waitstatus_to_exitcode(result) == 73
+    project = prepared[0]
+    assert access.status(project)["state"] == "maintenance"
+    before = {path: path.read_bytes() for path in (project / access.CONTROL).iterdir() if path.is_file()}
+    if boundary == "completion:before-journal-sync":
+        with pytest.raises(SystemExit, match="readonly|sidecar"):
+            _run(prepared, "status", capsys)
+        capsys.readouterr()
+    else:
+        snapshot = _run(prepared, "status", capsys)
+        assert snapshot["maintenance"] == "maintenance"
+        assert snapshot["progress"]["moves"]["completed"] == 0
+        assert snapshot["activity"] == "Stopped; recovery requires reconciliation"
+    assert all(path.read_bytes() == content for path, content in before.items())
+    with pytest.raises(access.MaintenanceClosed):
+        with access.operation(project):
+            pytest.fail("Exited migration worker reopened ordinary access")
+    assert _run(prepared, "resume", capsys)["graph_accepted"]
+    assert _run(prepared, "status", capsys)["progress"]["moves"]["completed"] == 44
+    with pytest.raises(access.MaintenanceClosed):
+        with access.operation(project):
+            pytest.fail("Owned recovery reopened ordinary access without release")
 
 
 def test_status_corrupt_sqlite_is_a_clean_read_only_refusal(prepared, capsys):

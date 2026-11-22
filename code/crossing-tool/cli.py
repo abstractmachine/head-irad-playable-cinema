@@ -9932,7 +9932,7 @@ def cmd_migration(args):
             print(f"{field.replace('_', ' ').title():<20} | {value}")
 
 
-def build_parser():
+def build_parser(*, migration_only=False):
     parser = _HelpfulParser(
         prog="crossing",
         description="Relate moving images across media.",
@@ -10009,6 +10009,9 @@ def build_parser():
         if action not in ("status", "prepare", "approve", "cancel"):
             command.add_argument("--clients-stopped", action="store_true", help="Confirm all Crossing windows and project-writing jobs are stopped")
         command.set_defaults(func=cmd_migration)
+
+    if migration_only:
+        return parser
 
     silhouette_sub = p_silhouette.add_subparsers(dest="silhouette_subcommand", required=True)
     p_archive = silhouette_sub.add_parser("archive", help="Plan or explicitly execute journaled superseded archival")
@@ -13195,7 +13198,10 @@ def main():
 def _main_with_project_access(leases):
     from tool.project_access import operation
 
-    parser = build_parser()
+    if len(sys.argv) > 1 and sys.argv[1] == "migration":
+        parser = build_parser(migration_only=True)
+    else:
+        parser = build_parser()
     argcomplete.autocomplete(parser)
     if len(sys.argv) == 1:
         parser.print_help()

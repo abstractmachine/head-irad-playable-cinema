@@ -1,6 +1,6 @@
 """Operator presentation over the existing migration owners; production disabled."""
 
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 import fcntl
 import json
 import os
@@ -56,9 +56,11 @@ def _stat(path):
 @contextmanager
 def _evidence_database(project, reference):
     from services.backup_mirror import sqlite_window
-    path = _file(project, reference)
-    with sqlite_window(path), closing(migration.readonly(path)) as database:
-        yield database
+    window = renames.journal_window() if reference.startswith(access.CONTROL + "/rename-") else nullcontext()
+    with window:
+        path = _file(project, reference)
+        with sqlite_window(path), closing(migration.readonly(path)) as database:
+            yield database
 
 
 def _fixture(project):
