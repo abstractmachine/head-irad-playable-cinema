@@ -16,7 +16,7 @@ from tool import project_access as access
 
 RECORD = "migration-authorization.json"
 PRODUCTION = Path("/home/cowpoke/playable/dead-crossing")
-ACTIVATED_IDENTITY_SHA256 = None
+ACTIVATED_IDENTITY_SHA256 = "68e3366a5b4fa0fae5139ede168c806dc520d03431d9df45f543eebadf2357b0"
 LIFETIME_SECONDS = 86400
 _owners = WeakKeyDictionary()
 
