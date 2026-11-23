@@ -112,6 +112,116 @@ def test_dispatch_interruption_status_and_resume(prepared, capsys, monkeypatch, 
     assert _run(prepared, "resume", capsys)["outcome"] == "resume"
 
 
+def test_cli_registry_resume_twice_preserves_pairs_and_matches_uninterrupted(prepared, capsys, monkeypatch):
+    from services.resource_migration import readonly
+    project, plan, checksum = prepared
+    candidate = project / "data/indexes/.graph-cli-fixture.sqlite3"
+    journal = project / access.CONTROL / "graph-cli-fixture.sqlite3"
+    original_dispatch = interface.dispatch
+
+    def committed(path):
+        with closing(readonly(path)) as database:
+            database.row_factory = sqlite3.Row
+            rows = {tuple(row[key] for key in ("instance_id", "kind", "mode")): dict(row)
+                    for row in database.execute("SELECT * FROM resource_locations")}
+            operations = [tuple(row) for row in database.execute("SELECT * FROM publication_operations ORDER BY operation_id")]
+        files = {row[key]: ((project / row[key]).stat().st_ino, (project / row[key]).stat().st_mtime_ns,
+                            (project / row[key]).read_bytes())
+                 for row in rows.values() for key in ("record_path", "image_path")}
+        return rows, operations, files
+
+    def assert_preserved(before, path):
+        rows, operations, files = committed(path)
+        assert all(rows[key] == row for key, row in before[0].items())
+        assert all(row in operations for row in before[1])
+        assert all(files[key] == value for key, value in before[2].items())
+
+    def interrupt_after(action, pairs):
+        count = 0
+        def stop(event):
+            nonlocal count
+            if action == "resume":
+                assert event not in ("before-rename", "metadata-replaced")
+            if event == "registry-pair-committed":
+                count += 1
+                if count == pairs:
+                    raise RuntimeError("Registry recovery interrupted")
+        monkeypatch.setattr(interface, "dispatch", lambda args, **options: original_dispatch(args, interrupt=stop, **options))
+        with pytest.raises(SystemExit, match="Registry recovery interrupted"):
+            _run(prepared, action, capsys)
+        capsys.readouterr()
+        monkeypatch.setattr(interface, "dispatch", original_dispatch)
+        assert count == pairs
+        with closing(readonly(journal)) as database:
+            assert database.execute("SELECT count(*) FROM transforms WHERE state!='done'").fetchone()[0] == 0
+            assert database.execute("SELECT state FROM registry_install").fetchone()[0] == "populating"
+        with pytest.raises(access.MaintenanceClosed):
+            with access.operation(project):
+                pytest.fail("Registry recovery reopened ordinary access")
+
+    interrupt_after("start", 2)
+    first = committed(candidate)
+    assert len(first[0]) == 2
+    candidate_inode, journal_inode = candidate.stat().st_ino, journal.stat().st_ino
+    with closing(readonly(journal)) as database:
+        transforms = database.execute("SELECT * FROM transforms ORDER BY number").fetchall()
+    interrupt_after("resume", 4)
+    assert candidate.stat().st_ino == candidate_inode and journal.stat().st_ino == journal_inode
+    assert_preserved(first, candidate)
+    second = committed(candidate)
+    assert len(second[0]) == 4
+    events = []
+    monkeypatch.setattr(interface, "dispatch", lambda args, **options: original_dispatch(args, interrupt=events.append, **options))
+    assert _run(prepared, "resume", capsys)["graph_accepted"]
+    monkeypatch.setattr(interface, "dispatch", original_dispatch)
+    assert "before-rename" not in events and "metadata-replaced" not in events
+    installed = project / "data/indexes/resources.sqlite3"
+    assert installed.stat().st_ino == candidate_inode and journal.stat().st_ino == journal_inode
+    assert_preserved(second, installed)
+    with closing(readonly(journal)) as database:
+        assert database.execute("SELECT * FROM transforms ORDER BY number").fetchall() == transforms
+        assert database.execute("SELECT state FROM registry_install").fetchone()[0] == "installed"
+    assert digest(plan) == checksum
+
+    def logical_registry(root):
+        registry = root / "data/indexes/resources.sqlite3"
+        normalize = lambda value: json.dumps(value, sort_keys=True).replace(str(root), "<project>")
+        with closing(readonly(registry)) as database:
+            database.row_factory = sqlite3.Row
+            assert database.execute("PRAGMA foreign_key_check").fetchall() == []
+            assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+            result = {}
+            for table in ("instances", "shots", "resource_locations", "publication_operations", "annotation_layouts", "generation_runs"):
+                rows = [dict(row) for row in database.execute("SELECT * FROM " + table)]
+                for row in rows:
+                    row.pop("created_at", None)
+                    if table == "resource_locations":
+                        assert digest(root / row["record_path"]) == row.pop("record_sha256")
+                        assert digest(root / row["image_path"]) == row["image_sha256"]
+                        row["record"] = json.loads((root / row["record_path"]).read_text())
+                    elif table == "publication_operations":
+                        details = json.loads(row["details"])
+                        assert details.pop("record_sha256") == digest(root / details["record_path"])
+                        row["details"] = details
+                    elif table == "generation_runs":
+                        assert len(row.pop("reservation")) == 32
+                result[table] = sorted(normalize(row) for row in rows)
+            assert len(result["resource_locations"]) == len(result["publication_operations"]) == 7
+            return result
+
+    resumed = logical_registry(project)
+    with access.temporary_rename_project() as uninterrupted:
+        baseline_plan, baseline_checksum, _, _ = _fixture(uninterrupted)
+        assert _run((uninterrupted, baseline_plan, baseline_checksum), "start", capsys)["graph_accepted"]
+        assert logical_registry(uninterrupted) == resumed
+        with pytest.raises(access.MaintenanceClosed):
+            with access.operation(uninterrupted):
+                pytest.fail("Unaccepted baseline reopened ordinary access")
+    with pytest.raises(access.MaintenanceClosed):
+        with access.operation(project):
+            pytest.fail("Completed resume released maintenance")
+
+
 @pytest.mark.parametrize("boundary", ["intent-committed", "renamed"])
 def test_cli_repeated_resume_reconciles_without_duplicate_moves(prepared, capsys, monkeypatch, boundary):
     from services import resource_rename as renames
