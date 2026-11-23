@@ -170,7 +170,8 @@ def test_metadata_requires_completed_rename_handoff():
         assert (project / "data/semantic.json").exists()
 
 
-def test_import_moved_pairs_uses_canonical_validation_without_copying():
+@pytest.mark.parametrize("indexed_source", [False, True])
+def test_import_moved_pairs_uses_canonical_validation_without_copying(indexed_source):
     from data.resource_storage import ResourceStore
     from services.resource_migration import readonly
     from services.resource_resolution import resolve_silhouette
@@ -183,12 +184,28 @@ def test_import_moved_pairs_uses_canonical_validation_without_copying():
             _execute(owner, plan, checksum)
             with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
                 store = ResourceStore(project, preparation, approved=True)
+                if indexed_source:
+                    with pytest.raises(ValueError, match="Missing or ambiguous frozen pair"):
+                        store.import_fixture_pair(owner, frozen, records[0][1], "silhouettes",
+                                                  metadata_source=str(records[1][2].relative_to(project)))
+                    for kind, mode in (("engravings", "frame"), ("silhouettes", "frame")):
+                        with pytest.raises(ValueError, match="Missing or ambiguous frozen pair"):
+                            store.import_fixture_pair(owner, frozen, records[0][1], kind, mode,
+                                                      metadata_source=str(records[0][2].relative_to(project)))
                 for record, instance, legacy, media in records:
+                    queries = []
+                    frozen.set_trace_callback(queries.append)
+                    keywords = {"metadata_source": str(legacy.relative_to(project))} if indexed_source else {}
                     for _ in range(2):
-                        assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") == 1
+                        assert store.import_fixture_pair(owner, frozen, instance, "silhouettes", **keywords) == 1
+                    frozen.set_trace_callback(None)
+                    if indexed_source:
+                        lookup = next(query for query in queries if query.startswith("SELECT f.*,t.after_sha256"))
+                        assert all("SCAN" not in row[3] for row in frozen.execute("EXPLAIN QUERY PLAN " + lookup))
                     resolved = resolve_silhouette(project, instance, registry=preparation)
                     assert resolved["record"]["shot_id"] == record["shot_id"]
                     assert resolved["record"]["unknown"] == {"retain": True}
+                assert digest(plan) == checksum
             with pytest.raises(access.MaintenanceClosed):
                 with access.operation(project):
                     pytest.fail("ordinary admission opened")

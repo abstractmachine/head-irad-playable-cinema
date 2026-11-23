@@ -489,13 +489,18 @@ class ResourceStore:
                              (media_type, media_id, media["filename"], "media-first-v1", expected_revision + 1, json.dumps(artifacts)))
             return expected_revision + 1
 
-    def import_fixture_pair(self, owner, frozen, instance_id, kind, mode=""):
+    def import_fixture_pair(self, owner, frozen, instance_id, kind, mode="", *, metadata_source=None):
         """Commit a verified relocated pair without copying or legacy fallback."""
         from services.resource_publication import _validation
         from PIL import Image
         state = self._fixture_state(owner)
         schema = {"silhouettes": "silhouette-v1", "engravings": "engraving-v2"}[kind]
-        rows = frozen.execute("SELECT f.*,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND t.schema=? AND coalesce(f.mode,'')=? AND disposition='Transform'", (instance_id, schema, mode)).fetchall()
+        query = "SELECT f.*,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND t.schema=? AND coalesce(f.mode,'')=? AND disposition='Transform'"
+        parameters = (instance_id, schema, mode)
+        if metadata_source is not None:
+            query += " AND f.source=?"
+            parameters += (metadata_source,)
+        rows = frozen.execute(query, parameters).fetchall()
         if len(rows) != 1:
             raise ValueError("Missing or ambiguous frozen pair")
         expected = rows[0]

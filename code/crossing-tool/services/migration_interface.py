@@ -56,7 +56,9 @@ def _stat(path):
 @contextmanager
 def _evidence_database(project, reference):
     from services.backup_mirror import sqlite_window
-    window = renames.journal_window() if reference.startswith(access.CONTROL + "/rename-") else nullcontext()
+    guarded = (reference.startswith((access.CONTROL + "/rename-", access.CONTROL + "/graph-", "data/indexes/.graph-"))
+               or reference == "data/indexes/resources.sqlite3")
+    window = renames.journal_window() if guarded else nullcontext()
     with window:
         path = _file(project, reference)
         with sqlite_window(path), closing(migration.readonly(path)) as database:

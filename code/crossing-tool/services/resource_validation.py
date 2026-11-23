@@ -97,7 +97,7 @@ def validate_source_classification(project, metadata, *, annotation_layout="lega
             left, top, width, height = bbox
             if left < 0 or top < 0 or width < 1 or height < 1 or left + width > size[0] or top + height > size[1]:
                 errors.append("segmentation bbox exceeds source frame")
-            if type(area) is not int or area < 1 or area > width * height:
+            if type(area) is not int or area < 1 or area > size[0] * size[1]:
                 errors.append("invalid mask area")
     return {"state": "invalid" if errors else "incomplete" if missing else "valid", "missing": missing, "errors": errors}
 
@@ -214,8 +214,8 @@ def validate_metadata(project, binding, metadata, kind, mode="", *, annotation_l
             left, top, width, height = bbox
             if left < 0 or top < 0 or width < 1 or height < 1 or left + width > size[0] or top + height > size[1]:
                 errors.append("segmentation bbox exceeds source frame")
-            elif type(area) is int and area > width * height:
-                errors.append("mask area exceeds segmentation bbox")
+            elif type(area) is int and area > size[0] * size[1]:
+                errors.append("mask area exceeds source frame")
         for key in ("sam_model", "frame_match_model", "source_frame"):
             required(key)
         if field is not None and label is not None and destination is not None:

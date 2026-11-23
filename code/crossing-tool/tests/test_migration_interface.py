@@ -2,6 +2,7 @@ import json
 from contextlib import closing, contextmanager
 import os
 import sqlite3
+import subprocess
 import sys
 import threading
 import traceback
@@ -109,6 +110,312 @@ def test_dispatch_interruption_status_and_resume(prepared, capsys, monkeypatch, 
     assert snapshot["maintenance"] != "open"
     assert "Resume" in snapshot["recovery_actions"]
     assert _run(prepared, "resume", capsys)["outcome"] == "resume"
+
+
+@pytest.mark.parametrize("boundary", ["intent-committed", "renamed"])
+def test_cli_repeated_resume_reconciles_without_duplicate_moves(prepared, capsys, monkeypatch, boundary):
+    from services import resource_rename as renames
+    from services.resource_migration import readonly
+    project, plan, _ = prepared
+    journal = project / access.CONTROL / "rename-cli-fixture.sqlite3"
+    with closing(readonly(plan)) as database:
+        destinations = {str(project / row[0]) for row in database.execute("SELECT destination FROM files WHERE disposition='Move'")}
+    performed = []
+    original_rename = renames._rename
+    original_dispatch = interface.dispatch
+
+    def rename(source_parent, source, destination_parent, destination):
+        target = os.path.join(os.readlink(f"/proc/self/fd/{destination_parent}"), destination)
+        original_rename(source_parent, source, destination_parent, destination)
+        if target in destinations:
+            performed.append(target)
+
+    def interrupted(action, completed):
+        count = 0
+        def stop(event):
+            nonlocal count
+            if event == "completion-committed":
+                count += 1
+            if event == boundary and count == completed:
+                raise RuntimeError("Qualification interruption")
+        monkeypatch.setattr(interface, "dispatch", lambda args, **options: original_dispatch(args, interrupt=stop, **options))
+        with pytest.raises(SystemExit, match="Qualification interruption"):
+            _run(prepared, action, capsys)
+        capsys.readouterr()
+        monkeypatch.setattr(interface, "dispatch", original_dispatch)
+
+    monkeypatch.setattr(renames, "_rename", rename)
+    interrupted("start", 4)
+    assert _run(prepared, "status", capsys)["progress"]["moves"]["completed"] == 4
+    with closing(readonly(journal)) as database:
+        completed = {row[0]: ((project / row[0]).stat().st_ino, digest(project / row[0]))
+                     for row in database.execute("SELECT destination FROM moves WHERE state='done'")}
+        assert database.execute("SELECT count(*) FROM moves WHERE state='intent'").fetchone()[0] == 1
+    interrupted("resume", 2)
+    assert _run(prepared, "status", capsys)["progress"]["moves"]["completed"] > 4
+    assert _run(prepared, "resume", capsys)["outcome"] == "resume"
+    assert _run(prepared, "status", capsys)["progress"]["moves"]["completed"] == 44
+    assert len(performed) == len(set(performed)) == 44
+    assert all(((project / target).stat().st_ino, digest(project / target)) == value for target, value in completed.items())
+    with closing(readonly(journal)) as database:
+        assert database.execute("SELECT count(*) FROM moves WHERE state!='done'").fetchone()[0] == 0
+        assert not database.execute("SELECT source FROM events WHERE state='done' GROUP BY source HAVING count(*)!=1").fetchall()
+    with pytest.raises(access.MaintenanceClosed):
+        with access.operation(project):
+            pytest.fail("Resume released maintenance")
+
+
+@pytest.mark.parametrize("defect", ["destination", "source", "journal", "plan"])
+def test_cli_resume_refuses_altered_relocation_evidence(prepared, capsys, monkeypatch, defect):
+    from services.resource_migration import readonly
+    project, plan, _ = prepared
+    original = interface.dispatch
+    def stop(event):
+        if event == "intent-committed":
+            raise RuntimeError("Qualification interruption")
+    monkeypatch.setattr(interface, "dispatch", lambda args, **options: original(args, interrupt=stop, **options))
+    with pytest.raises(SystemExit, match="Qualification interruption"):
+        _run(prepared, "start", capsys)
+    capsys.readouterr()
+    monkeypatch.setattr(interface, "dispatch", original)
+    journal = project / access.CONTROL / "rename-cli-fixture.sqlite3"
+    with closing(readonly(journal)) as database:
+        row = database.execute("SELECT source,destination FROM moves WHERE state='intent'").fetchone()
+    artifact = project / row[0]
+    if defect == "destination":
+        artifact = project / row[1]
+        artifact.write_bytes(b"independent destination; never overwrite")
+    elif defect == "source":
+        artifact.write_bytes(b"altered source")
+    elif defect == "journal":
+        artifact = journal
+        with closing(sqlite3.connect(journal)) as database:
+            database.execute("DELETE FROM events")
+            database.commit()
+    else:
+        artifact = plan
+        artifact.write_bytes(artifact.read_bytes() + b"altered plan")
+    before = artifact.read_bytes()
+    with pytest.raises(SystemExit):
+        _run(prepared, "resume", capsys)
+    capsys.readouterr()
+    assert artifact.read_bytes() == before
+    assert access.status(project)["state"] == "maintenance"
+
+
+@pytest.mark.parametrize("boundary,reference", [
+    ("metadata-replaced", ".crossing-maintenance/graph-cli-fixture.sqlite3"),
+    ("index-staged", ".crossing-maintenance/graph-cli-fixture.sqlite3"),
+    ("registry-pair-committed", "data/indexes/.graph-cli-fixture.sqlite3"),
+])
+def test_cli_later_phase_slow_progress_reader(prepared, capsys, monkeypatch, boundary, reference):
+    original_window = interface._evidence_database
+    original_connect = sqlite3.connect
+    original_dispatch = interface.dispatch
+    entered = threading.Event()
+    release = threading.Event()
+    updates = []
+    worker = None
+    progress = interface.Progress(*prepared, "cli-fixture", updates.append)
+
+    @contextmanager
+    def delayed(project, requested):
+        with original_window(project, requested) as database:
+            if requested == reference and threading.current_thread().name == "qualification-reader":
+                entered.set()
+                release.wait(0.2)
+            yield database
+
+    def connect(path, *arguments, **options):
+        if "mode=ro" not in str(path):
+            options["timeout"] = 0.05
+        return original_connect(path, *arguments, **options)
+
+    def poll(event):
+        nonlocal worker
+        if event == boundary and worker is None:
+            worker = threading.Thread(target=lambda: progress.report(boundary), name="qualification-reader")
+            worker.start()
+            assert entered.wait(5), "Progress did not inspect the expected database"
+
+    monkeypatch.setattr(interface, "_evidence_database", delayed)
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    monkeypatch.setattr(interface, "dispatch", lambda args, **options: original_dispatch(args, interrupt=poll, **options))
+    try:
+        assert _run(prepared, "start", capsys)["graph_accepted"]
+    finally:
+        release.set()
+        if worker is not None:
+            worker.join(5)
+            assert not worker.is_alive()
+    assert worker is not None
+    assert updates
+
+
+def test_cli_later_phase_uncommitted_progress_defers(prepared, capsys, monkeypatch):
+    boundaries = {"metadata-prepared:before-sync", "transform:done:before-sync",
+                  "registry-prepared:before-sync", "index-built:before-sync"}
+    updates = []
+    seen = set()
+    progress = interface.Progress(*prepared, "cli-fixture", updates.append)
+    original = interface.dispatch
+    def poll(event):
+        if event in boundaries:
+            seen.add(event)
+            progress.report(event)
+    monkeypatch.setattr(interface, "dispatch", lambda args, **options: original(args, interrupt=poll, **options))
+    assert _run(prepared, "start", capsys)["graph_accepted"]
+    assert seen == boundaries
+    assert updates
+    assert all("progress" not in update and "Migration database checkpoint busy" in update["detail"] for update in updates)
+    snapshot = _run(prepared, "status", capsys)
+    assert snapshot["progress"]["transforms"]["completed"] == 19
+    assert snapshot["progress"]["index_outputs"]["completed"] == 15
+
+
+def test_failed_journal_guard_acquisition_can_retry(tmp_path):
+    from services import resource_graph as graph, resource_rename as renames
+    with closing(graph._journal_database(tmp_path / "graph.sqlite3")) as database:
+        database.execute("CREATE TABLE evidence(value TEXT)")
+        with renames.journal_window():
+            with pytest.raises(RuntimeError, match="Cannot write while inspecting"):
+                database.execute("INSERT INTO evidence VALUES('refused')")
+        assert database._window is None
+        database.execute("INSERT INTO evidence VALUES('retry')")
+        with pytest.raises(RuntimeError, match="checkpoint busy"):
+            with renames.journal_window():
+                pytest.fail("Retried write bypassed the guard")
+        database.rollback()
+        with renames.journal_window():
+            assert database._window is None
+
+
+@pytest.mark.parametrize("method,arguments", [
+    ("execute", ("SELECT 1",)),
+    ("executemany", ("INSERT INTO evidence VALUES(?)", [("closed",)])),
+    ("executescript", ("SELECT 1;",)),
+    ("commit", ()),
+    ("rollback", ()),
+])
+def test_closed_journal_operations_release_guard(tmp_path, method, arguments):
+    from services import resource_graph as graph, resource_rename as renames
+    database = graph._journal_database(tmp_path / "graph.sqlite3")
+    database.close()
+    try:
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            getattr(database, method)(*arguments)
+        with renames.journal_window():
+            assert database._window is None
+    finally:
+        database._release()
+
+
+@pytest.mark.parametrize("method,finish,expected", [
+    ("execute", "commit", 1),
+    ("executemany", "rollback", 0),
+    ("executescript", "close", 0),
+])
+def test_graph_journal_concurrent_readers_wait_for_transaction_end(tmp_path, method, finish, expected):
+    from services import resource_graph as graph
+    control = tmp_path / access.CONTROL
+    control.mkdir()
+    reference = access.CONTROL + "/graph-fixture.sqlite3"
+    observations = []
+
+    def read():
+        try:
+            with interface._evidence_database(tmp_path, reference) as snapshot:
+                observations.append(snapshot.execute("SELECT count(*) FROM evidence").fetchone()[0])
+        except RuntimeError as error:
+            observations.append(str(error))
+
+    def poll():
+        worker = threading.Thread(target=read)
+        worker.start()
+        worker.join(5)
+        assert not worker.is_alive()
+
+    with closing(graph._journal_database(tmp_path / reference)) as database:
+        database.execute("CREATE TABLE evidence(value TEXT)")
+        if method == "execute":
+            database.execute("INSERT INTO evidence VALUES('uncommitted')")
+        elif method == "executemany":
+            database.executemany("INSERT INTO evidence VALUES(?)", [("uncommitted",)])
+        else:
+            with pytest.raises(sqlite3.OperationalError, match="no such table"):
+                database.executescript("BEGIN; INSERT INTO evidence VALUES('uncommitted'); SELECT * FROM missing;")
+        poll()
+        assert len(observations) == 1 and "checkpoint busy" in observations[0]
+        getattr(database, finish)()
+        assert database._window is None
+        poll()
+        assert observations[-1] == expected
+
+
+def test_failed_graph_transaction_releases_checkpoint_guard(tmp_path):
+    from services import resource_graph as graph, resource_rename as renames
+    from services.resource_migration import readonly
+    path = tmp_path / "graph.sqlite3"
+    with pytest.raises(RuntimeError, match="injected failure"):
+        with closing(graph._journal_database(path)) as database:
+            database.execute("CREATE TABLE evidence(value TEXT)")
+            database.execute("INSERT INTO evidence VALUES('uncommitted')")
+            with pytest.raises(RuntimeError, match="checkpoint busy"):
+                with renames.journal_window():
+                    pytest.fail("Read entered an uncommitted write")
+            raise RuntimeError("injected failure")
+    with renames.journal_window(), closing(readonly(path)) as database:
+        assert database.execute("SELECT count(*) FROM evidence").fetchone()[0] == 0
+
+
+def test_cli_external_sqlite_reader_refuses_safely_then_resumes(prepared, capsys, monkeypatch, tmp_path):
+    from services.resource_migration import readonly
+    project = prepared[0]
+    journal = project / access.CONTROL / "rename-cli-fixture.sqlite3"
+    original = interface.dispatch
+    completed = 0
+    def stop(event):
+        nonlocal completed
+        if event == "completion-committed":
+            completed += 1
+            if completed == 4:
+                raise RuntimeError("Qualification interruption")
+    with monkeypatch.context() as scoped:
+        scoped.setattr(interface, "dispatch", lambda args, **options: original(args, interrupt=stop, **options))
+        with pytest.raises(SystemExit, match="Qualification interruption"):
+            _run(prepared, "start", capsys)
+    capsys.readouterr()
+    code = ("import sqlite3,sys; database=sqlite3.connect(sys.argv[1],uri=True); "
+            "database.execute('BEGIN'); database.execute('SELECT count(*) FROM moves').fetchone(); "
+            "print('ready',flush=True); sys.stdin.read(); database.rollback(); database.close()")
+    process = subprocess.Popen([sys.executable, "-c", code, journal.as_uri() + "?mode=ro"],
+                               stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
+    original_connect = sqlite3.connect
+    processes = tmp_path / "unmanaged-reader-proc"
+    processes.mkdir()
+    def connect(path, *arguments, **options):
+        if str(path).startswith("file:/proc/self/fd/"):
+            options["timeout"] = 0.05
+        return original_connect(path, *arguments, **options)
+    try:
+        assert process.stdout.readline().strip() == "ready"
+        with monkeypatch.context() as scoped:
+            scoped.setattr(maintenance_preflight, "_PROC_ROOT", processes)
+            scoped.setattr(sqlite3, "connect", connect)
+            with pytest.raises(SystemExit, match="database is locked"):
+                _run(prepared, "resume", capsys)
+        capsys.readouterr()
+        assert access.status(project)["state"] == "maintenance"
+        with closing(readonly(journal)) as database:
+            assert database.execute("SELECT count(*) FROM moves WHERE state='done'").fetchone()[0] == 4
+            assert database.execute("SELECT count(*) FROM moves WHERE state='intent'").fetchone()[0] == 0
+    finally:
+        process.stdin.close()
+        assert process.wait(timeout=5) == 0
+        process.stdout.close()
+    assert _run(prepared, "resume", capsys)["outcome"] == "resume"
+    assert _run(prepared, "status", capsys)["progress"]["moves"]["completed"] == 44
+    assert access.status(project)["state"] == "maintenance"
 
 
 def test_dispatch_safe_rollback(prepared, capsys):
@@ -273,7 +580,7 @@ def test_progress_inside_journal_write_defers_uncommitted_counts(prepared):
     assert result["graph_accepted"]
     assert updates
     assert all(update["status"] == "Waiting for a readable durable checkpoint" for update in updates)
-    assert all("Relocation journal checkpoint busy" in update["detail"] for update in updates)
+    assert all("Migration database checkpoint busy" in update["detail"] for update in updates)
     assert all("progress" not in update for update in updates)
     assert interface.status(*prepared, "cli-fixture")["progress"]["moves"]["completed"] == 44
 

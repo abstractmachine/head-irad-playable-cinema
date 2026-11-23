@@ -1078,6 +1078,36 @@ def test_failed_replacement_retains_previous_pair(writable):
     assert before == (current["metadata"].read_bytes(), current["image"].read_bytes())
 
 
+@pytest.mark.parametrize("bbox,size,area,valid", [
+    ([1308, 483, 170, 34], [1920, 1080], 6260, True),
+    ([0, 0, 1, 1], [2, 2], 4, True),
+    ([0, 0, 2, 2], [2, 2], 5, False),
+    ([1, 0, 2, 2], [2, 2], 1, False),
+    ([0, 0, 0, 2], [2, 2], 1, False),
+    ([0, 0, 2, 2], [2, 2], 0, False),
+])
+def test_detector_bbox_is_independent_from_segmentation_area(writable, bbox, size, area, valid):
+    from services.resource_validation import validate_source_classification
+    project, registry, instance, content, image = writable
+    binding = locations.registered_instance(project, registry, instance)
+    metadata = {**content, "bbox": bbox, "frame_size": size, "mask_area": area}
+    result = validate_metadata(project, binding, metadata, "silhouettes")
+    assert (result["state"] == "valid") is valid
+    assert (validate_source_classification(project, metadata, segmentation=True)["state"] == "valid") is valid
+    if not valid:
+        assert result["errors"]
+
+
+def test_publish_mask_larger_than_detector_bbox(writable):
+    project, registry, instance, content, image = writable
+    checksum = digest(image)
+    publish_resource(project, registry, instance, "silhouettes", {**content, "bbox": [0, 0, 1, 1]}, image, approved=True)
+    published = resolve_silhouette(project, instance, registry=registry)
+    assert published["record"]["bbox"] == [0, 0, 1, 1]
+    assert published["record"]["mask_area"] == 4
+    assert digest(published["image"]) == checksum
+
+
 @pytest.mark.parametrize("missing", ["field", "label", "bbox", "mask_area", "sam_model"])
 def test_incomplete_metadata_cannot_publish(writable, missing):
     project, registry, instance, content, image = writable

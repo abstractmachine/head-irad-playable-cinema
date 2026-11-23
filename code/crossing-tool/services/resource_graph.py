@@ -16,6 +16,62 @@ from services.maintenance_preflight import check_quiescence
 from tool import project_access as access
 
 
+class _JournalConnection(sqlite3.Connection):
+    def __init__(self, *arguments, **options):
+        super().__init__(*arguments, **options)
+        self._window = None
+
+    def _acquire(self):
+        if self._window is None:
+            window = renames.journal_window(writing=True)
+            window.__enter__()
+            self._window = window
+
+    def _release(self):
+        if self._window is not None:
+            window, self._window = self._window, None
+            window.__exit__(None, None, None)
+
+    def _call(self, operation, *arguments, **options):
+        self._acquire()
+        try:
+            return operation(*arguments, **options)
+        finally:
+            try:
+                active = self.in_transaction
+            except sqlite3.ProgrammingError:
+                active = False
+            if not active:
+                self._release()
+
+    def execute(self, *arguments, **options):
+        return self._call(super().execute, *arguments, **options)
+
+    def executemany(self, *arguments, **options):
+        return self._call(super().executemany, *arguments, **options)
+
+    def executescript(self, *arguments, **options):
+        return self._call(super().executescript, *arguments, **options)
+
+    def commit(self):
+        return self._call(super().commit)
+
+    def rollback(self):
+        return self._call(super().rollback)
+
+    def close(self):
+        self._acquire()
+        try:
+            return super().close()
+        finally:
+            self._release()
+
+
+def _journal_database(path):
+    with renames.journal_window(writing=True):
+        return sqlite3.connect(path, factory=_JournalConnection)
+
+
 def _fixture_access(function):
     @wraps(function)
     def guarded(owner, *args, **kwargs):
@@ -567,7 +623,7 @@ def transform_fixture_metadata(owner, plan, *, approved_digest, plan_identity, c
     info = journal.lstat()
     if journal.is_symlink() or info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o077:
         raise ValueError("Unsafe graph journal")
-    with closing(migration.readonly(path)) as frozen, closing(sqlite3.connect(journal)) as database:
+    with closing(migration.readonly(path)) as frozen, closing(_journal_database(journal)) as database:
         database.row_factory = sqlite3.Row
         database.execute("PRAGMA synchronous=FULL")
         database.execute("PRAGMA foreign_keys=ON")
@@ -769,7 +825,7 @@ def install_fixture_registry(owner, plan, *, approved_digest, plan_identity, cli
     """Install the one canonical model while normal admission remains closed."""
     state, project, path, _, _ = _handoff(owner, plan, approved_digest, plan_identity, clients_stopped)
     journal = project / access.CONTROL / ("graph-" + state["operation"] + ".sqlite3")
-    with closing(migration.readonly(path)) as frozen, closing(sqlite3.connect(journal)) as evidence:
+    with closing(migration.readonly(path)) as frozen, closing(_journal_database(journal)) as evidence:
         evidence.row_factory = sqlite3.Row
         evidence.execute("PRAGMA synchronous=FULL")
         if evidence.execute("SELECT 1 FROM transforms WHERE state!='done' LIMIT 1").fetchone():
@@ -819,7 +875,7 @@ def install_fixture_registry(owner, plan, *, approved_digest, plan_identity, cli
         if not candidate.exists():
             renames._event(interrupt, "registry-preparation")
             create_storage_directory(project, candidate.parent)
-            with closing(migration.readonly(preparation)) as source, closing(sqlite3.connect(candidate)) as output:
+            with renames.journal_window(writing=True), closing(migration.readonly(preparation)) as source, closing(sqlite3.connect(candidate)) as output:
                 source.backup(output)
                 _integrity(output)
                 output.commit()
@@ -830,14 +886,18 @@ def install_fixture_registry(owner, plan, *, approved_digest, plan_identity, cli
         _identity_equality(frozen, candidate)
         if stored and stored[0]["state"] == "prepared" and digest(candidate) != stored[0]["sha256"]:
             raise ValueError("Prepared registry content changed")
-        store = ResourceStore(project, candidate, approved=True)
+        with renames.journal_window(writing=True):
+            store = ResourceStore(project, candidate, approved=True)
         for collection in frozen.execute("SELECT * FROM collections ORDER BY media_type,media_id"):
-            store.import_fixture_collection(owner, frozen, collection)
+            with renames.journal_window(writing=True):
+                store.import_fixture_collection(owner, frozen, collection)
         for kind, schema in (("silhouettes", "silhouette-v1"), ("engravings", "engraving-v2")):
             if kind == "engravings" and metadata.get("generation_run_plan"):
-                store.import_fixture_run(owner, frozen, metadata["generation_run_plan"], interrupt=interrupt)
-            for row in frozen.execute("SELECT f.instance_id,coalesce(f.mode,'') AS mode FROM files f JOIN transformations t USING(source) WHERE t.schema=? ORDER BY f.instance_id", (schema,)):
-                store.import_fixture_pair(owner, frozen, row["instance_id"], kind, row["mode"])
+                with renames.journal_window(writing=True):
+                    store.import_fixture_run(owner, frozen, metadata["generation_run_plan"], interrupt=interrupt)
+            for row in frozen.execute("SELECT f.source,f.instance_id,coalesce(f.mode,'') AS mode FROM files f JOIN transformations t USING(source) WHERE t.schema=? ORDER BY f.instance_id", (schema,)):
+                with renames.journal_window(writing=True):
+                    store.import_fixture_pair(owner, frozen, row["instance_id"], kind, row["mode"], metadata_source=row["source"])
                 renames._event(interrupt, "registry-pair-committed")
         with closing(migration.readonly(candidate)) as checked:
             _integrity(checked)
@@ -896,7 +956,7 @@ def rebuild_fixture_indexes(owner, plan, *, approved_digest, plan_identity, clie
     state, project, path, _, _ = _handoff(owner, plan, approved_digest, plan_identity, clients_stopped)
     journal = project / access.CONTROL / ("graph-" + state["operation"] + ".sqlite3")
     registry = project / "data/indexes/resources.sqlite3"
-    with closing(migration.readonly(path)) as frozen, closing(sqlite3.connect(journal)) as database:
+    with closing(migration.readonly(path)) as frozen, closing(_journal_database(journal)) as database:
         database.row_factory = sqlite3.Row
         database.execute("PRAGMA synchronous=FULL")
         installation = database.execute("SELECT * FROM registry_install").fetchone()
@@ -1064,7 +1124,7 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                 try:
                     binding = locations.registered_instance(project, registry, row["instance_id"])
                     publication = locations.current_location(project, binding, row["kind"], row["mode"])
-                    expected = frozen.execute("SELECT f.destination,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND coalesce(f.mode,'')=? AND t.schema=?", (row["instance_id"], row["mode"], "silhouette-v1" if row["kind"] == "silhouettes" else "engraving-v2")).fetchall()
+                    expected = frozen.execute("SELECT f.destination,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND coalesce(f.mode,'')=? AND t.schema=? AND f.destination=?", (row["instance_id"], row["mode"], "silhouette-v1" if row["kind"] == "silhouettes" else "engraving-v2", row["record_path"])).fetchall()
                     if len(expected) != 1 or expected[0]["destination"] != row["record_path"] or expected[0]["after_sha256"] != row["record_sha256"]:
                         fail("incorrect_location", row["record_path"], "registry does not match frozen pair")
                     collection = installed.execute("SELECT layout FROM annotation_layouts WHERE media_type=? AND media_id=?", (binding["media_type"], binding["media_id"])).fetchone()
@@ -1212,7 +1272,7 @@ def install_fixture_graph(owner, plan, *, approved_digest, plan_identity, client
         context["graph_sha256"] = migration.sha256(renames._encode([approved_digest, context["registry_sha256"],
             [list(row) for row in database.execute("SELECT source,after_sha FROM index_outputs ORDER BY source")]]).encode())
     result["canonical_context"] = context
-    with closing(sqlite3.connect(journal)) as database:
+    with closing(_journal_database(journal)) as database:
         database.execute("PRAGMA synchronous=FULL")
         database.execute("CREATE TABLE IF NOT EXISTS acceptance(payload TEXT NOT NULL)")
         database.execute("DELETE FROM acceptance")
@@ -1229,7 +1289,7 @@ def install_fixture_graph(owner, plan, *, approved_digest, plan_identity, client
     checked = validate_fixture_graph(owner, plan, **{**arguments, "interrupt": None})
     if not checked["graph_accepted"]:
         checked["canonical_context"] = context
-        with closing(sqlite3.connect(journal)) as database:
+        with closing(_journal_database(journal)) as database:
             database.execute("PRAGMA synchronous=FULL")
             database.execute("UPDATE acceptance SET payload=?", (renames._encode(checked),))
             _commit(database, journal.parent, None, "final-acceptance-rejected")
@@ -1259,7 +1319,7 @@ def _observed(project, reference, allowed, *, reader=None):
 def rollback_fixture_graph(owner, plan, *, approved_digest, plan_identity, clients_stopped=False, interrupt=None):
     state, project, path, _, _ = _handoff(owner, plan, approved_digest, plan_identity, clients_stopped)
     journal = project / access.CONTROL / ("graph-" + state["operation"] + ".sqlite3")
-    with closing(sqlite3.connect(journal)) as database:
+    with closing(_journal_database(journal)) as database:
         database.row_factory = sqlite3.Row
         database.execute("PRAGMA synchronous=FULL")
         _integrity(database)

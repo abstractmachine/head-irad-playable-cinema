@@ -23,18 +23,27 @@ from tool import project_access as access
 
 _FIELDS = ("source", "destination", "size", "mtime_ns", "ctime_ns", "inode", "device", "links", "sha256", "instance_id", "mode", "owner")
 _JOURNAL_GATE = threading.Lock()
+_JOURNAL_READERS = threading.local()
 
 
 @contextmanager
 def journal_window(*, writing=False):
+    depth = getattr(_JOURNAL_READERS, "depth", 0)
     if writing:
+        if depth:
+            raise RuntimeError("Cannot write while inspecting migration databases")
         _JOURNAL_GATE.acquire()
-    elif not _JOURNAL_GATE.acquire(blocking=False):
-        raise RuntimeError("Relocation journal checkpoint busy; try status again")
+    elif not depth and not _JOURNAL_GATE.acquire(blocking=False):
+        raise RuntimeError("Migration database checkpoint busy; try status again")
+    if not writing:
+        _JOURNAL_READERS.depth = depth + 1
     try:
         yield
     finally:
-        _JOURNAL_GATE.release()
+        if not writing:
+            _JOURNAL_READERS.depth = depth
+        if writing or not depth:
+            _JOURNAL_GATE.release()
 
 
 def _event(interrupt, phase):
