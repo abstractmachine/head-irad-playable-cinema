@@ -194,6 +194,7 @@ def registered_instance(project, registry, instance_id):
         if len(rows) != 1:
             raise ValueError("Missing or ambiguous registered instance")
         binding = dict(rows[0])
+        binding["registry_path"] = str(path)
         if (binding.get("registration_state") != "registered"
                 or binding["shot_id"] != parse_instance_id(instance_id)[0]
             or binding["instance_number"] != parse_instance_id(instance_id)[1]
@@ -206,6 +207,7 @@ def registered_instance(project, registry, instance_id):
             locations = [dict(row) for row in database.execute(
                 "SELECT * FROM resource_locations WHERE instance_id=?", (instance_id,))]
         binding["locations"] = locations
+        binding["historical_import_operation"] = meta.get("historical_import_operation")
         if database.execute("SELECT 1 FROM sqlite_master WHERE name='generation_runs'").fetchone():
             binding["runs"] = [dict(row) for row in database.execute("SELECT * FROM generation_runs WHERE instance_id=?", (instance_id,))]
         return binding
@@ -243,6 +245,32 @@ def current_location(project, binding, kind, mode):
             or metadata.get("field") != row["field"] or metadata.get("label") != row["label"]
             or (kind == "engravings" and metadata.get("mode") != mode)):
         raise ValueError("Stale resource identity/classification/location binding")
+    provenance = metadata.get("search_provenance")
+    questionable = isinstance(provenance, dict) and provenance.get("state") == "questionable"
+    if kind == "silhouettes" and questionable and metadata.get("assignment", {}).get("state", "active") == "active" and not binding.get("historical_import_operation"):
+        raise ValueError("Historical questionable resource lacks committed inactive assignment")
+    if kind == "silhouettes" and binding.get("historical_import_operation"):
+        from contextlib import closing
+        import hashlib
+        operation_id = "graph-" + binding["historical_import_operation"] + "-" + hashlib.sha256((binding["instance_id"] + kind + mode).encode()).hexdigest()
+        registry = binding.get("registry_path")
+        if registry is None:
+            raise ValueError("Historical assignment requires its registry")
+        with closing(sqlite3.connect(Path(registry).as_uri() + "?mode=ro", uri=True)) as database:
+            operation = database.execute("SELECT state,details FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+        requires_assignment = row["revision"] == 1 and questionable
+        if operation is None and requires_assignment:
+            raise ValueError("Historical assignment commitment missing")
+        if operation is not None:
+            details = json.loads(operation[1])
+            if requires_assignment and (details.get("expected_revision", -1) + 1 != row["revision"]
+                    or not isinstance(details.get("assignment"), dict) or details["assignment"].get("state") not in ("inactive", "superseded")):
+                raise ValueError("Historical questionable assignment must remain inactive")
+            if details.get("expected_revision", -1) + 1 == row["revision"] and "assignment" in details:
+                if (operation[0] != "finished" or any(details.get(key) != row[key] for key in ("record_path", "image_path", "record_sha256", "image_sha256"))
+                        or not isinstance(details["assignment"], dict) or details["assignment"].get("state") not in ("active", "inactive", "superseded")):
+                    raise ValueError("Historical assignment commitment differs")
+                metadata = {**metadata, "assignment": details["assignment"]}
     return {"instance_id": binding["instance_id"], "metadata": metadata_path,
             "image": image_path, "record": metadata, "layout": row["layout"], "revision": row["revision"]}
 

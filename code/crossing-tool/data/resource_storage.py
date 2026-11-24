@@ -489,9 +489,78 @@ class ResourceStore:
                              (media_type, media_id, media["filename"], "media-first-v1", expected_revision + 1, json.dumps(artifacts)))
             return expected_revision + 1
 
-    def import_fixture_pair(self, owner, frozen, instance_id, kind, mode="", *, metadata_source=None):
-        """Commit a verified relocated pair without copying or legacy fallback."""
+    def _historical_assignment(self, owner, frozen, state, expected, metadata, binding):
+        from contextlib import closing
+        from services import resource_rename
+        from services.resource_migration import readonly
+        journal = self.project / ".crossing-maintenance" / ("graph-" + state["operation"] + ".sqlite3")
+        with closing(readonly(locations.project_file(self.project, journal))) as evidence:
+            header_row = evidence.execute("SELECT payload,direction FROM meta").fetchall()
+            if len(header_row) != 1 or header_row[0]["direction"] != "forward":
+                raise ValueError("Historical assignment requires forward graph evidence")
+            header = json.loads(header_row[0]["payload"])
+            plan_path = Path(frozen.execute("PRAGMA database_list").fetchone()[2]).resolve()
+            if (header["project"] != str(self.project) or header["token"] != state["token"]
+                    or header["operation"] != state["operation"]
+                    or plan_path != locations.project_file(self.project, header["plan"])):
+                raise ValueError("Historical assignment plan/owner binding differs")
+            info = plan_path.stat()
+            fingerprint = ((info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns), header["sha256"], header["revision"])
+            if getattr(self, "_historical_plan", None) != fingerprint:
+                owner.require_migration_plan(plan_path, header["sha256"], header["revision"])
+                resource_rename._plan(self.project, plan_path, header["sha256"], header["revision"])
+                self._historical_plan = fingerprint
+            row = evidence.execute("SELECT * FROM transforms WHERE source=?", (expected["source"],)).fetchone()
+            if row is None or row["state"] != "done":
+                raise ValueError("Historical assignment lacks completed frozen transformation")
+            retained = locations.project_file(self.project, journal.with_suffix("") / (str(row["number"]) + ".before"))
+            approved = json.loads(row["evidence"])
+            if (any(approved.get(key) != expected[key] for key in ("source", "destination", "instance_id", "sha256", "after_sha256"))
+                    or digest(retained) != expected["sha256"]):
+                raise ValueError("Historical assignment before-image/frozen evidence differs")
+            original = json.loads(retained.read_text())
+        identity = frozen.execute("SELECT * FROM identity_bindings WHERE instance_id=?", (binding["instance_id"],)).fetchone()
+        if (identity is None or any(binding.get(key) != identity[key] for key in identity.keys())
+                or binding["legacy_json"] != expected["source"]
+                or binding["registration_key"] != hashlib.sha256(json.dumps(
+                    [binding["legacy_identity"], expected["source"]], ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()):
+            raise ValueError("Historical assignment frozen identity differs")
+        for key in ("media_type", "media_id", "filename", "shot_id", "field", "label", "assignment", "search_provenance"):
+            if original.get(key) != metadata.get(key):
+                raise ValueError("Historical assignment changes original " + key)
+        assignment = metadata.get("assignment", {"state": "active"})
+        if not isinstance(assignment, dict) or assignment.get("state") not in ("active", "inactive", "superseded"):
+            raise ValueError("Invalid historical assignment")
+        provenance = original.get("search_provenance", {})
+        questionable = isinstance(provenance, dict) and provenance.get("state") == "questionable"
+        if questionable:
+            context = {key: metadata[key] for key in ("media_type", "filename", "shot_id")}
+            if (provenance.get("method") != "canonical_search" or provenance.get("audit_version") != "canonical-search-v1"
+                    or provenance.get("source_shot_identity") != context
+                    or provenance.get("field") != metadata["field"] or provenance.get("historical_search_label") != metadata["label"]
+                    or provenance.get("canonical_search_match") is not False or provenance.get("source_shot_returned") is not False
+                    or not isinstance(provenance.get("annotation_values"), list)):
+                raise ValueError("Historical questionable provenance is incomplete or contradictory")
+        return ({**assignment, "state": "inactive"} if questionable and assignment["state"] == "active" else assignment), questionable
+
+    def _validate_fixture_pair(self, owner, frozen, database, state, expected, metadata, binding, kind, mode):
         from services.resource_publication import _validation
+        validation = _validation(self, database, binding, metadata, kind, mode)
+        assignment = None
+        provenance = metadata.get("search_provenance")
+        if kind == "silhouettes" and (isinstance(provenance, dict) and provenance.get("state") == "questionable"
+                                      or metadata.get("assignment", {"state": "active"}) != {"state": "active"}):
+            assignment, questionable = self._historical_assignment(owner, frozen, state, expected, metadata, binding)
+            allowed = {"only active validated silhouettes may be published"}
+            if questionable:
+                allowed.add("category/label source annotation association mismatch")
+            validation["errors"] = [error for error in validation["errors"] if error not in allowed]
+            if validation["state"] == "invalid" and not validation["errors"] and not validation["missing"]:
+                validation["state"] = "valid"
+        return validation, assignment
+
+    def import_fixture_pair(self, owner, frozen, instance_id, kind, mode="", *, metadata_source=None, interrupt=None):
+        """Commit a verified relocated pair without copying or legacy fallback."""
         from PIL import Image
         state = self._fixture_state(owner)
         schema = {"silhouettes": "silhouette-v1", "engravings": "engraving-v2"}[kind]
@@ -511,7 +580,7 @@ class ResourceStore:
         operation_id = "graph-" + state["operation"] + "-" + hashlib.sha256((instance_id + kind + mode).encode()).hexdigest()
         with self.transaction() as database:
             binding = locations.registered_instance(self.project, self.registry, instance_id)
-            validation = _validation(self, database, binding, metadata, kind, mode)
+            validation, assignment = self._validate_fixture_pair(owner, frozen, database, state, expected, metadata, binding, kind, mode)
             if validation["state"] != "valid":
                 raise ValueError("Maintenance pair validation failed: " + json.dumps(validation, default=str))
             paths = validation["destination"]
@@ -526,18 +595,29 @@ class ResourceStore:
             operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
             if previous:
                 if (operation is None or operation["state"] != "finished" or previous["record_sha256"] != expected["after_sha256"]
-                        or previous["image_sha256"] != image["sha256"] or previous["record_path"] != expected["destination"]):
+                        or previous["image_sha256"] != image["sha256"] or previous["record_path"] != expected["destination"]
+                        or json.loads(operation["details"]).get("assignment") != assignment):
                     raise ValueError("Conflicting existing location/import evidence")
                 return previous["revision"]
             details = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),
                        "record_sha256": expected["after_sha256"], "image_sha256": image["sha256"],
                        "expected_revision": 0, "metadata": metadata, "maintenance_operation": state["operation"]}
+            if assignment is not None:
+                details["assignment"] = assignment
+                existing = database.execute("SELECT value FROM meta WHERE key='historical_import_operation'").fetchone()
+                if existing and existing[0] != state["operation"]:
+                    raise ValueError("Historical import operation differs")
+                database.execute("INSERT OR IGNORE INTO meta VALUES('historical_import_operation',?)", (state["operation"],))
             database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", (operation_id, instance_id, kind, mode, "files_published", json.dumps(details)))
             revision = self.commit_location(database, binding, kind, mode, paths, metadata, 0, operation_id=operation_id)
             details.pop("metadata")
             details["metadata_evidence"] = "frozen-transform-and-record-sha256"
             database.execute("UPDATE publication_operations SET state='finished',details=? WHERE operation_id=?", (json.dumps(details, ensure_ascii=False), operation_id))
-            return revision
+            if interrupt is not None:
+                interrupt("registry-pair-before-commit")
+        if interrupt is not None:
+            interrupt("registry-pair-after-commit")
+        return revision
 
     def __init__(self, project, registry, *, approved=False):
         if not approved:

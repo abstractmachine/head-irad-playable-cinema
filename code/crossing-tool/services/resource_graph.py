@@ -897,7 +897,7 @@ def install_fixture_registry(owner, plan, *, approved_digest, plan_identity, cli
                     store.import_fixture_run(owner, frozen, metadata["generation_run_plan"], interrupt=interrupt)
             for row in frozen.execute("SELECT f.source,f.instance_id,coalesce(f.mode,'') AS mode FROM files f JOIN transformations t USING(source) WHERE t.schema=? ORDER BY f.instance_id", (schema,)):
                 with renames.journal_window(writing=True):
-                    store.import_fixture_pair(owner, frozen, row["instance_id"], kind, row["mode"], metadata_source=row["source"])
+                    store.import_fixture_pair(owner, frozen, row["instance_id"], kind, row["mode"], metadata_source=row["source"], interrupt=interrupt)
                 renames._event(interrupt, "registry-pair-committed")
         with closing(migration.readonly(candidate)) as checked:
             _integrity(checked)
@@ -1039,7 +1039,6 @@ def rebuild_fixture_indexes(owner, plan, *, approved_digest, plan_identity, clie
 @_fixture_access
 def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clients_stopped=False, interrupt=None):
     state, project, path, _, _ = _handoff(owner, plan, approved_digest, plan_identity, clients_stopped, verify_resources=False)
-    from services.resource_validation import validate_metadata
     failures = []
     total = 0
     def fail(category, source, detail):
@@ -1120,17 +1119,25 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                                 raise ValueError("Missing or changed frozen BEST PNG")
                 except (ValueError, KeyError, TypeError, OSError) as error:
                     fail("stale_reference", collection["filename"], str(error))
+            store = ResourceStore(project, registry, approved=True)
             for row in installed.execute("SELECT * FROM resource_locations ORDER BY instance_id,kind,mode"):
                 try:
                     binding = locations.registered_instance(project, registry, row["instance_id"])
                     publication = locations.current_location(project, binding, row["kind"], row["mode"])
-                    expected = frozen.execute("SELECT f.destination,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND coalesce(f.mode,'')=? AND t.schema=? AND f.destination=?", (row["instance_id"], row["mode"], "silhouette-v1" if row["kind"] == "silhouettes" else "engraving-v2", row["record_path"])).fetchall()
+                    expected = frozen.execute("SELECT f.*,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND coalesce(f.mode,'')=? AND t.schema=? AND f.destination=?", (row["instance_id"], row["mode"], "silhouette-v1" if row["kind"] == "silhouettes" else "engraving-v2", row["record_path"])).fetchall()
                     if len(expected) != 1 or expected[0]["destination"] != row["record_path"] or expected[0]["after_sha256"] != row["record_sha256"]:
                         fail("incorrect_location", row["record_path"], "registry does not match frozen pair")
+                        continue
                     collection = installed.execute("SELECT layout FROM annotation_layouts WHERE media_type=? AND media_id=?", (binding["media_type"], binding["media_id"])).fetchone()
                     if collection is None or collection[0] != "media-first-v1":
                         fail("stale_reference", row["record_path"], "canonical annotation commitment missing; legacy fallback forbidden")
-                    findings = validate_metadata(project, binding, publication["record"], row["kind"], row["mode"], annotation_layout=collection[0] if collection else "legacy-v1", preserve_assignment=True)
+                    stored_metadata = publication["record"]
+                    provenance = stored_metadata.get("search_provenance")
+                    if row["kind"] == "silhouettes" and isinstance(provenance, dict) and provenance.get("state") == "questionable":
+                        stored_metadata = json.loads(publication["metadata"].read_text())
+                    findings, assignment = store._validate_fixture_pair(owner, frozen, installed, state, expected[0], stored_metadata, binding, row["kind"], row["mode"])
+                    if assignment is not None and publication["record"].get("assignment") != assignment:
+                        fail("incorrect_identity", row["record_path"], "historical assignment commitment differs")
                     if findings["state"] != "valid":
                         fail("incorrect_identity", row["record_path"], json.dumps(findings, default=str))
                 except (ValueError, OSError, KeyError) as error:

@@ -2,6 +2,23 @@
 
 ## Frozen Media-First Migration
 
+Frozen historical silhouettes with independently authenticated canonical-search
+`questionable` provenance are imported as inactive, not relabeled or declared
+valid. The importer verifies the approved plan, immutable binding, retained
+before-image and exact provenance context; only the semantic association failure
+is excepted. Source-shot identity, schema, geometry, mappings, hashes and PNG
+integrity remain required. Unverifiable or missing provenance grants no exception.
+
+The existing assignment dictionary is committed atomically in the registry's
+import publication journal, bound to the exact location revision and hashes.
+Shared registered resolution exposes that effective assignment while preserving
+frozen JSON/PNG bytes and curation history. Raw historical JSON is not the
+authority for effective registered activity. Ordinary discovery and selection
+exclude inactive resources; explicit `active_only=False` inspection preserves
+curatorial access. Missing or contradictory import-assignment evidence fails
+closed. No recheck, deduplication, deletion, or change of production authority is
+implied. New silhouette publication retains ordinary validation.
+
 `crossing migration status --project /absolute/project` reads maintenance state,
 the integrated commitment, durable journal counters and recovery guidance.
 `crossing migration prepare --project /absolute/project` authenticates the fixed

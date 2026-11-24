@@ -968,7 +968,7 @@ def _deserialize_record(project: Path, payload: str) -> dict:
             path = Path(value)
             record[key] = path if path.is_absolute() else project / path
     from services.resource_resolution import resolve_index_record
-    return resolve_index_record(project, record)
+    return resolve_index_record(project, record, active_only=False)
 
 
 def _clean_stem(stem: str) -> str:

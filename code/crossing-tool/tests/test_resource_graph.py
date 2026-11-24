@@ -33,7 +33,7 @@ OUTPUTS = (
 )
 
 
-def _canonical_fixture(project):
+def _canonical_fixture(project, *, historical_questionable=False, first_record=None, first_values=None, first_image_bytes=None):
     from data import resource_locations as locations
     from data.resource_storage import ResourceStore, adopt_registry
     from services.silhouette_canonical_identity import InstanceRegistry, RESEARCH, prepare_registration
@@ -50,14 +50,26 @@ def _canonical_fixture(project):
         record = {**media, "media_type": media_type, "filename_stem": Path(media["filename"]).stem, "shot_id": media_id + "@f000010-f000020",
                   "frame": 12, "field": "objects", "label": "tree", "bbox": [0, 0, 2, 2], "frame_size": [2, 2], "mask_area": 4,
                   "sam_model": "fixture", "frame_match_model": "fixture", "source_frame": "frame:12", "unknown": {"retain": True}}
+        if historical_questionable and not records:
+            record.update(field="wearing", label="barber pants", search_provenance={
+                "state": "questionable", "method": "canonical_search", "audit_version": "canonical-search-v1",
+                "historical_search_label": "barber pants", "field": "wearing",
+                "source_shot_identity": {"media_type": media_type, "filename": media["filename"], "shot_id": record["shot_id"]},
+                "annotation_values": ["pants"], "canonical_search_match": False, "source_shot_returned": False,
+            })
+        if not records and first_record:
+            record.update(first_record)
         legacy = project / "data/silhouettes/catalog" / media_type / Path(media["filename"]).stem / "tree/object_0001.json"
         legacy.parent.mkdir(parents=True)
         legacy.write_text(json.dumps(record))
         Image.new("RGBA", (2, 2), (20, 40, 60, 255)).save(legacy.with_suffix(".png"))
-        instance = identities.register([prepare_registration({**record, "path": legacy}, project)])[0][1]
+        if not records and first_image_bytes is not None:
+            legacy.with_suffix(".png").write_bytes(first_image_bytes)
+        instance = identities.register([prepare_registration({**record, "assignment": {"state": "active"}, "path": legacy}, project)])[0][1]
         annotation = locations.annotation_path(project, media["filename"], media_type)
         annotation.parent.mkdir(parents=True, exist_ok=True)
-        annotation.write_text(json.dumps([{"shot": {"shot_id": record["shot_id"], "annotation": {"objects": ["tree"]}, "best_frame": {"frame": 14, "score": 0.9}}}]))
+        values = first_values if not records and first_values is not None else ["pants" if record["label"] == "barber pants" else "tree"]
+        annotation.write_text(json.dumps([{"shot": {"shot_id": record["shot_id"], "annotation": {record["field"]: values}, "best_frame": {"frame": 14, "score": 0.9}}}]))
         records.append((record, instance, legacy, media))
     proposal = identities.path
     identities.close()
@@ -72,7 +84,7 @@ def _canonical_fixture(project):
             database.executemany("INSERT INTO identity_bindings VALUES(?,?,?,?,?,?,?,?,?,?,?)", bindings.execute("SELECT * FROM instances"))
             database.executemany("INSERT INTO shot_reservations VALUES(?,?)", bindings.execute("SELECT * FROM shots"))
         for record, instance, legacy, media in records:
-            pair = locations.silhouette_destination(project, media, record["media_type"], instance, "objects", "tree")
+            pair = locations.silhouette_destination(project, media, record["media_type"], instance, record["field"], record["label"])
             _file(database, project, str(legacy.relative_to(project)), pair["metadata"], "Transform", "services.resource_publication", instance_id=instance, hash_bytes=True)
             _file(database, project, str(legacy.with_suffix(".png").relative_to(project)), pair["image"], "Move", "services.resource_publication", instance_id=instance, hash_bytes=True)
             after = transform_silhouette(record, instance)
@@ -80,12 +92,12 @@ def _canonical_fixture(project):
     return plan, digest(plan), preparation, records
 
 
-def _full_fixture(project):
+def _full_fixture(project, *, historical_questionable=False):
     from data import resource_locations as locations
     from data.resource_storage import ResourceStore
     from services.frame_match import best_frame_path
     from services.resource_migration import _reference
-    plan, _, preparation, records = _canonical_fixture(project)
+    plan, _, preparation, records = _canonical_fixture(project, historical_questionable=historical_questionable)
     store = ResourceStore(project, preparation, approved=True)
     with sqlite3.connect(plan) as database:
         database.execute("ALTER TABLE collections ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
@@ -102,7 +114,7 @@ def _full_fixture(project):
             best.parent.mkdir(parents=True, exist_ok=True)
             best.write_bytes(b"committed BEST bytes, not the query frame")
             _file(database, project, str(best.relative_to(project)), None, "Retain", "services.frame_match", hash_bytes=True)
-            pair = locations.silhouette_destination(project, media, media_type, instance, "objects", "tree")
+            pair = locations.silhouette_destination(project, media, media_type, instance, record["field"], record["label"])
             _reference(database, str(legacy.relative_to(project)), "/png", str(legacy.with_suffix(".png").relative_to(project)), str(pair["image"].relative_to(project)), "path relocation")
         for reference in OUTPUTS:
             path = project / reference
@@ -209,6 +221,258 @@ def test_import_moved_pairs_uses_canonical_validation_without_copying(indexed_so
             with pytest.raises(access.MaintenanceClosed):
                 with access.operation(project):
                     pytest.fail("ordinary admission opened")
+
+
+@pytest.mark.parametrize("boundary", [None, "registry-pair-before-commit", "registry-pair-after-commit"])
+def test_frozen_questionable_import_is_inactive_without_rewriting_history(boundary):
+    from contextlib import closing
+    from services.resource_migration import readonly
+    from services.resource_resolution import resolve_silhouette
+    from data.resource_storage import ResourceStore
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project, historical_questionable=True)
+        record, instance, legacy, media = records[0]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                target = frozen.execute("SELECT destination FROM files WHERE source=?", (str(legacy.relative_to(project)),)).fetchone()[0]
+                before = (project / target).read_bytes()
+                if boundary:
+                    def stop(phase):
+                        if phase == boundary:
+                            with sqlite3.connect(preparation.as_uri() + "?mode=ro", uri=True) as snapshot:
+                                count = snapshot.execute("SELECT count(*) FROM resource_locations").fetchone()[0]
+                                assert count == (1 if phase == "registry-pair-after-commit" else 0)
+                            if count:
+                                assert resolve_silhouette(project, instance, registry=preparation, active_only=False)["record"]["assignment"]["state"] == "inactive"
+                            raise RuntimeError("import interrupted")
+                    with pytest.raises(RuntimeError, match="import interrupted"):
+                        store.import_fixture_pair(owner, frozen, instance, "silhouettes", interrupt=stop)
+                for _ in range(2):
+                    assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") == 1
+                    with pytest.raises(ValueError, match="requires an active record"):
+                        resolve_silhouette(project, instance, registry=preparation)
+                    inspected = resolve_silhouette(project, instance, registry=preparation, active_only=False)
+                    assert inspected["record"]["assignment"]["state"] == "inactive"
+                    assert inspected["record"]["search_provenance"] == record["search_provenance"]
+                    assert inspected["record"]["label"] == "barber pants"
+                    assert (project / target).read_bytes() == before
+                with sqlite3.connect(preparation) as database:
+                    assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 1
+                    assert database.execute("SELECT count(*) FROM publication_operations").fetchone()[0] == 1
+
+
+@pytest.mark.parametrize("questionable", [False, True])
+def test_frozen_import_preserves_inactive_curation_history(questionable):
+    from contextlib import closing
+    from services.resource_migration import readonly
+    from services.resource_resolution import resolve_silhouette
+    from data.resource_storage import ResourceStore
+    assignment = {"state": "inactive", "reason": "curator rejected", "recheck": {"state": "pending"}, "history": ["prior decision"]}
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project, historical_questionable=questionable,
+            first_record={"assignment": assignment, "human_best": True, "replacement_links": ["retained-reference"]})
+        record, instance, legacy, media = records[0]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                for _ in range(2):
+                    assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") == 1
+                    current = resolve_silhouette(project, instance, registry=preparation, active_only=False)["record"]
+                    assert current["assignment"] == assignment and current["human_best"] is True
+                    assert current["replacement_links"] == ["retained-reference"]
+
+
+@pytest.mark.parametrize("attack", ["flag_only", "missing_provenance", "unverifiable_provenance", "self_declared_valid", "bad_context", "source_shot", "ambiguous_source", "metadata_hash", "png_hash", "image_integrity", "mapping", "identity", "geometry", "missing_field", "forged_plan"])
+def test_questionable_import_does_not_bypass_other_validation(attack):
+    from contextlib import closing
+    from data import resource_locations as locations
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    changes = {"flag_only": {"search_provenance": {"state": "questionable"}},
+               "missing_provenance": {"search_provenance": None},
+               "unverifiable_provenance": {"search_provenance": {"state": "unverifiable"}},
+               "self_declared_valid": {"search_provenance": {"state": "valid"}},
+               "bad_context": {"search_provenance": {"state": "questionable", "method": "canonical_search",
+                   "audit_version": "canonical-search-v1", "historical_search_label": "barber pants", "field": "wearing",
+                   "source_shot_identity": {"media_type": "movie", "filename": "movie-tmdb_1.mp4", "shot_id": "tmdb_1@f000030-f000040"},
+                   "annotation_values": ["pants"], "canonical_search_match": False, "source_shot_returned": False}},
+               "geometry": {"bbox": [10, 10, 2, 2]}, "missing_field": {"sam_model": None}}
+    with access.temporary_rename_project() as project:
+        plan, _, preparation, records = _canonical_fixture(project, historical_questionable=True, first_record=changes.get(attack),
+            first_image_bytes=b"not a PNG despite a matching frozen hash" if attack == "image_integrity" else None)
+        record, instance, legacy, media = records[0]
+        if attack == "identity":
+            with sqlite3.connect(plan) as database:
+                from services.resource_migration import transform_silhouette
+                after = transform_silhouette(record, instance)
+                after["instance_id"] = "tmdb_2@f000010-f000020#0001"
+                database.execute("DELETE FROM transformations WHERE source=?", (str(legacy.relative_to(project)),))
+                _transform(database, str(legacy.relative_to(project)), "silhouette-v1", after,
+                           patch={key: after[key] for key in ("publication_contract", "resource_kind", "instance_id", "png")})
+        checksum = digest(plan)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            pair = locations.silhouette_destination(project, media, "movie", instance, record["field"], record["label"])
+            if attack == "metadata_hash":
+                pair["metadata"].write_text(pair["metadata"].read_text() + " ")
+            if attack == "png_hash":
+                pair["image"].write_bytes(b"corrupt PNG")
+            if attack == "source_shot":
+                locations.annotation_path(project, media["filename"], "movie", layout="legacy-v1").write_text("[]")
+            if attack == "ambiguous_source":
+                annotation = locations.annotation_path(project, media["filename"], "movie", layout="legacy-v1")
+                entries = json.loads(annotation.read_text())
+                annotation.write_text(json.dumps(entries + entries))
+            if attack in ("mapping", "forged_plan"):
+                with sqlite3.connect(plan) as database:
+                    if attack == "mapping":
+                        database.execute("UPDATE files SET destination=destination||'.wrong' WHERE source=?", (str(legacy.with_suffix('.png').relative_to(project)),))
+                    else:
+                        database.execute("INSERT INTO meta VALUES('forged', 'true')")
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                with pytest.raises((ValueError, OSError)):
+                    store.import_fixture_pair(owner, frozen, instance, "silhouettes")
+                with sqlite3.connect(preparation) as database:
+                    assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
+                    assert database.execute("SELECT count(*) FROM publication_operations").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("current_matches", [False, True])
+def test_historical_inactive_discovery_and_explicit_inspection(current_matches, monkeypatch, capsys):
+    from contextlib import closing
+    import cli
+    from mcp_server import mcp_server as server
+    from data.resource_storage import ResourceStore
+    from services.illustration_index import rebuild_index, query_page
+    from services.resource_migration import readonly
+    from services.resource_publication import publish_silhouette
+    from services.resource_resolution import resolve_silhouette, resolve_source_silhouette, resolve_index_record, indexed_publications
+    from services.silhouette_discovery import list_active_candidate_references
+    from visualizers.components.illustration_source import SilhouetteSource
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project, historical_questionable=True,
+            first_values=["barber pants"] if current_matches else None)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                for record, instance, legacy, media in records:
+                    if record["label"] == "barber pants" and not current_matches:
+                        target = project / frozen.execute("SELECT destination FROM files WHERE source=?", (str(legacy.relative_to(project)),)).fetchone()[0]
+                        with pytest.raises(ValueError, match="association mismatch"):
+                            publish_silhouette(project, json.loads(target.read_text()), target.with_suffix('.png'), source_path=legacy)
+                    store.import_fixture_pair(owner, frozen, instance, "silhouettes")
+                for record, instance, legacy, media in records[1:]:
+                    assert resolve_silhouette(project, instance, registry=preparation)["record"].get("assignment", {"state": "active"})["state"] == "active"
+                assert rebuild_index(project, "silhouettes", "movie", registry=preparation)["count"] == 3
+                assert query_page(project, "silhouettes", "movie")["total"] == 2
+                administrative = query_page(project, "silhouettes", "movie", assignment_state="inactive")
+                assert administrative["total"] == 1 and len(administrative["records"]) == 1
+                inactive = administrative["records"][0]
+                assert inactive["search_provenance"]["state"] == "questionable"
+                assert inactive["instance_id"] == records[0][1]
+                assert len(indexed_publications(project, "silhouettes", "movie", registry=preparation)) == 3
+                assert list_active_candidate_references(project, word="barber pants", field="wearing")["entries"] == []
+                monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+                monkeypatch.setattr(cli.prefs, "set", lambda *args, **kwargs: pytest.fail("discovery changed preferences"))
+                monkeypatch.setattr(server, "_ctx", lambda: (str(project), "movie"))
+                assert json.loads(server.list_silhouette_candidates("barber pants", field="wearing"))["entries"] == []
+                assert json.loads(server.list_silhouettes("barber pants", field="wearing"))["entries"] == []
+                args = cli.build_parser().parse_args(["index", "silhouette", "list", "barber pants", "--field", "wearing", "--json"])
+                args.func(args)
+                assert json.loads(capsys.readouterr().out)["entries"] == []
+                source = SilhouetteSource(str(project))
+                assert source.page(field="wearing")["records"] == []
+                assert source.records(field="wearing") == []
+                with pytest.raises(ValueError, match="requires an active record"):
+                    resolve_source_silhouette(project, registry=preparation, instance_id=records[0][1])
+                with pytest.raises(ValueError, match="requires an active record"):
+                    source.thumbnail_path(inactive)
+                with pytest.raises(ValueError, match="requires an active record"):
+                    resolve_index_record(project, inactive)
+
+
+@pytest.mark.parametrize("tamper", ["missing_assignment", "active_assignment", "wrong_hash", "missing_operation", "unfinished_operation", "stale_revision", "missing_registry_marker"])
+def test_historical_assignment_corruption_fails_closed(tamper):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    from services.resource_resolution import resolve_silhouette
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project, historical_questionable=True)
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                ResourceStore(project, preparation, approved=True).import_fixture_pair(owner, frozen, instance, "silhouettes")
+                with sqlite3.connect(preparation) as database:
+                    details = json.loads(database.execute("SELECT details FROM publication_operations").fetchone()[0])
+                    if tamper == "missing_assignment":
+                        details.pop("assignment")
+                    elif tamper == "active_assignment":
+                        details["assignment"]["state"] = "active"
+                    elif tamper == "wrong_hash":
+                        details["image_sha256"] = "0" * 64
+                    elif tamper == "stale_revision":
+                        details["expected_revision"] = 2
+                    database.execute("UPDATE publication_operations SET details=?", (json.dumps(details),))
+                    if tamper == "missing_operation":
+                        database.execute("DELETE FROM publication_operations")
+                    elif tamper == "unfinished_operation":
+                        database.execute("UPDATE publication_operations SET state='prepared'")
+                    elif tamper == "missing_registry_marker":
+                        database.execute("DELETE FROM meta WHERE key='historical_import_operation'")
+                with pytest.raises(ValueError):
+                    resolve_silhouette(project, instance, registry=preparation, active_only=False)
+
+
+@pytest.mark.parametrize("boundary", [None, "registry-pair-before-commit", "registry-pair-after-commit"])
+def test_complete_questionable_graph_preserves_history_on_resume(boundary):
+    from services.resource_graph import install_fixture_graph
+    from services.resource_resolution import resolve_silhouette
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _full_fixture(project, historical_questionable=True)
+        preparation_before = preparation.read_bytes()
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            arguments = {"approved_digest": checksum, "plan_identity": "2B.3d", "clients_stopped": True}
+            if boundary:
+                def stop(phase):
+                    if phase == boundary:
+                        raise RuntimeError("questionable graph interrupted")
+                with pytest.raises(RuntimeError, match="questionable graph interrupted"):
+                    install_fixture_graph(owner, plan, **arguments, interrupt=stop)
+            for _ in range(2):
+                result = install_fixture_graph(owner, plan, **arguments)
+                assert result["graph_accepted"]
+                registry = project / "data/indexes/resources.sqlite3"
+                with access.fixture_graph_access(owner):
+                    inspected = resolve_silhouette(project, records[0][1], registry=registry, active_only=False)
+                    assert inspected["record"]["assignment"]["state"] == "inactive"
+                    assert inspected["record"]["search_provenance"] == records[0][0]["search_provenance"]
+                    stored = json.loads(inspected["metadata"].read_text())
+                    assert stored["label"] == "barber pants" and "assignment" not in stored
+                    assert resolve_silhouette(project, records[1][1], registry=registry)["record"]["label"] == "tree"
+            assert preparation.read_bytes() == preparation_before
+            assert all((project / reference).is_file() for reference in OUTPUTS)
+            with sqlite3.connect(registry) as database:
+                assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 6
+                assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
 @pytest.mark.parametrize("boundary", [None, "registry-intent:synced", "registry-preparation", "registry-pair-committed", "registry-prepared:synced", "registry-installation", "registry-installed", "registry-completion:synced"])

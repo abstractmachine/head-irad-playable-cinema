@@ -99,7 +99,7 @@ def indexed_publications(project, kind, media_type, *, registry=None):
 
 
 @project_operation
-def resolve_index_record(project, record):
+def resolve_index_record(project, record, *, active_only=True):
     """Verify an indexed registered reference, never substitute an unregistered path."""
     from pathlib import Path
     registry = record.get("resource_registry")
@@ -109,9 +109,13 @@ def resolve_index_record(project, record):
             raise ValueError("Canonical index record lacks registry provenance")
         return record
     instance_id = record["instance_id"]
-    resolved = (resolve_silhouette(project, instance_id, registry=registry, active_only=False) if record["resource_kind"] == "silhouettes"
-                else resolve_engraving(project, instance_id, record["mode"], registry=registry, active_only=False))
+    resolved = (resolve_silhouette(project, instance_id, registry=registry, active_only=active_only) if record["resource_kind"] == "silhouettes"
+                else resolve_engraving(project, instance_id, record["mode"], registry=registry, active_only=active_only))
     if (Path(record["path"]) != resolved["metadata"] or record.get("location_revision") != resolved["revision"]
             or any(record.get(key) != resolved["record"].get(key) for key in ("field", "label"))):
         raise ValueError("Derived illustration index points to a stale registered location")
+    if record["resource_kind"] == "silhouettes":
+        from services.silhouette_catalog import assignment_state_for_record
+        if assignment_state_for_record(record) != assignment_state_for_record(resolved["record"]):
+            raise ValueError("Derived illustration index points to a stale registered assignment")
     return {**record, "path": resolved["metadata"], "output_png": resolved["image"]}
