@@ -1080,10 +1080,28 @@ def test_failed_replacement_retains_previous_pair(writable):
 
 @pytest.mark.parametrize("bbox,size,area,valid", [
     ([1308, 483, 170, 34], [1920, 1080], 6260, True),
+    ([1346, -2, 124, 690], [1920, 1080], 22240, True),
     ([0, 0, 1, 1], [2, 2], 4, True),
+    ([-1, -1, 3, 3], [2, 2], 4, True),
+    ([1, 1, 2, 2], [2, 2], 4, True),
+    ([-1, -1, 4, 4], [2, 2], 4, True),
+    ([1, 0, 2, 2], [2, 2], 1, True),
     ([0, 0, 2, 2], [2, 2], 5, False),
-    ([1, 0, 2, 2], [2, 2], 1, False),
+    ([2, 0, 2, 2], [2, 2], 1, False),
+    ([0, 2, 2, 2], [2, 2], 1, False),
+    ([-2, 0, 2, 2], [2, 2], 1, False),
+    ([0, -2, 2, 2], [2, 2], 1, False),
+    ([-3, -3, 1, 1], [2, 2], 1, False),
     ([0, 0, 0, 2], [2, 2], 1, False),
+    ([0, 0, 2, -1], [2, 2], 1, False),
+    ([0, 0, 1.5, 2], [2, 2], 1, False),
+    ([0, 0, float("nan"), 2], [2, 2], 1, False),
+    ([0, 0, float("inf"), 2], [2, 2], 1, False),
+    ([False, 0, 2, 2], [2, 2], 1, False),
+    ([0, 0, 2], [2, 2], 1, False),
+    ([0, 0, 2, 2], [0, 2], 1, False),
+    ([0, 0, 2, 2], None, 1, False),
+    ([0, 0, 2, 2], [2, 2], True, False),
     ([0, 0, 2, 2], [2, 2], 0, False),
 ])
 def test_detector_bbox_is_independent_from_segmentation_area(writable, bbox, size, area, valid):
@@ -1095,15 +1113,16 @@ def test_detector_bbox_is_independent_from_segmentation_area(writable, bbox, siz
     assert (result["state"] == "valid") is valid
     assert (validate_source_classification(project, metadata, segmentation=True)["state"] == "valid") is valid
     if not valid:
-        assert result["errors"]
+        assert result["errors"] or result["missing"]
 
 
-def test_publish_mask_larger_than_detector_bbox(writable):
+@pytest.mark.parametrize("bbox", [[0, 0, 1, 1], [-1, -1, 3, 3], [1, 1, 2, 2]])
+def test_publish_mask_larger_than_detector_bbox(writable, bbox):
     project, registry, instance, content, image = writable
     checksum = digest(image)
-    publish_resource(project, registry, instance, "silhouettes", {**content, "bbox": [0, 0, 1, 1]}, image, approved=True)
+    publish_resource(project, registry, instance, "silhouettes", {**content, "bbox": bbox}, image, approved=True)
     published = resolve_silhouette(project, instance, registry=registry)
-    assert published["record"]["bbox"] == [0, 0, 1, 1]
+    assert published["record"]["bbox"] == bbox
     assert published["record"]["mask_area"] == 4
     assert digest(published["image"]) == checksum
 
@@ -1651,7 +1670,7 @@ def test_missing_field_correction_contract(writable, stage):
 def test_contradictory_metadata_rejected(writable, change):
     project, registry, instance, content, image = writable
     changes = {"identity": {"instance_id": instance.replace("#0001", "#0002")}, "field": {"field": "settings"},
-               "frame": {"frame": 999}, "bbox": {"bbox": [0, 0, 5, 5]}, "media": {"media_id": "tmdb_2"},
+               "frame": {"frame": 999}, "bbox": {"bbox": [2, 0, 5, 5]}, "media": {"media_id": "tmdb_2"},
                "mode": {"resource_kind": "engravings"}}
     content.update(changes[change])
     with pytest.raises(ValueError, match="rejected"):

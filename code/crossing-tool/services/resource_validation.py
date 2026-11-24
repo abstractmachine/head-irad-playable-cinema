@@ -12,6 +12,15 @@ from data.media_id import parse_shot_id, label_slug
 CONTRACT = "media-first-v1"
 
 
+def _detector_bbox_error(bbox, size):
+    left, top, width, height = bbox
+    if width < 1 or height < 1:
+        return "invalid segmentation bbox dimensions"
+    if left >= size[0] or top >= size[1] or left + width <= 0 or top + height <= 0:
+        return "segmentation bbox does not intersect source frame"
+    return None
+
+
 def validate_generation(generation, provider):
     """Shared provider-aware reproduction check for runs and publications."""
     missing = []
@@ -94,9 +103,9 @@ def validate_source_classification(project, metadata, *, annotation_layout="lega
         elif not isinstance(size, list) or len(size) != 2 or any(type(value) is not int or value < 1 for value in size):
             errors.append("invalid source frame dimensions")
         else:
-            left, top, width, height = bbox
-            if left < 0 or top < 0 or width < 1 or height < 1 or left + width > size[0] or top + height > size[1]:
-                errors.append("segmentation bbox exceeds source frame")
+            bbox_error = _detector_bbox_error(bbox, size)
+            if bbox_error:
+                errors.append(bbox_error)
             if type(area) is not int or area < 1 or area > size[0] * size[1]:
                 errors.append("invalid mask area")
     return {"state": "invalid" if errors else "incomplete" if missing else "valid", "missing": missing, "errors": errors}
@@ -211,10 +220,10 @@ def validate_metadata(project, binding, metadata, kind, mode="", *, annotation_l
             errors.append("invalid mask area")
         if (isinstance(bbox, list) and len(bbox) == 4 and all(type(value) is int for value in bbox)
                 and isinstance(size, list) and len(size) == 2 and all(type(value) is int and value > 0 for value in size)):
-            left, top, width, height = bbox
-            if left < 0 or top < 0 or width < 1 or height < 1 or left + width > size[0] or top + height > size[1]:
-                errors.append("segmentation bbox exceeds source frame")
-            elif type(area) is int and area > size[0] * size[1]:
+            bbox_error = _detector_bbox_error(bbox, size)
+            if bbox_error:
+                errors.append(bbox_error)
+            if type(area) is int and area > size[0] * size[1]:
                 errors.append("mask area exceeds source frame")
         for key in ("sam_model", "frame_match_model", "source_frame"):
             required(key)
