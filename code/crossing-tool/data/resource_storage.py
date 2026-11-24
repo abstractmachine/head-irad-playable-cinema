@@ -594,9 +594,20 @@ class ResourceStore:
             previous = database.execute("SELECT * FROM resource_locations WHERE instance_id=? AND kind=? AND mode=?", (instance_id, kind, mode)).fetchone()
             operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
             if previous:
-                if (operation is None or operation["state"] != "finished" or previous["record_sha256"] != expected["after_sha256"]
-                        or previous["image_sha256"] != image["sha256"] or previous["record_path"] != expected["destination"]
-                        or json.loads(operation["details"]).get("assignment") != assignment):
+                details = json.loads(operation["details"]) if operation else {}
+                recorded_assignment = details.get("assignment")
+                if ("assignment" not in details and assignment is not None
+                        and assignment == metadata.get("assignment") and assignment["state"] == "active"):
+                    recorded_assignment = assignment
+                commitments = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),
+                               "record_sha256": expected["after_sha256"], "image_sha256": image["sha256"]}
+                if (operation is None or operation["state"] != "finished"
+                        or any(operation[key] != value for key, value in (("instance_id", instance_id), ("kind", kind), ("mode", mode)))
+                        or any(previous[key] != value or details.get(key) != value for key, value in commitments.items())
+                        or previous["layout"] != "media-first-v1" or previous["revision"] != 1
+                        or previous["field"] != metadata["field"] or previous["label"] != metadata["label"]
+                        or details.get("expected_revision") != 0 or details.get("maintenance_operation") != state["operation"]
+                        or recorded_assignment != assignment):
                     raise ValueError("Conflicting existing location/import evidence")
                 return previous["revision"]
             details = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),

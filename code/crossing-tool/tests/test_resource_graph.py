@@ -92,12 +92,12 @@ def _canonical_fixture(project, *, historical_questionable=False, first_record=N
     return plan, digest(plan), preparation, records
 
 
-def _full_fixture(project, *, historical_questionable=False):
+def _full_fixture(project, *, historical_questionable=False, first_record=None):
     from data import resource_locations as locations
     from data.resource_storage import ResourceStore
     from services.frame_match import best_frame_path
     from services.resource_migration import _reference
-    plan, _, preparation, records = _canonical_fixture(project, historical_questionable=historical_questionable)
+    plan, _, preparation, records = _canonical_fixture(project, historical_questionable=historical_questionable, first_record=first_record)
     store = ResourceStore(project, preparation, approved=True)
     with sqlite3.connect(plan) as database:
         database.execute("ALTER TABLE collections ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
@@ -221,6 +221,117 @@ def test_import_moved_pairs_uses_canonical_validation_without_copying(indexed_so
             with pytest.raises(access.MaintenanceClosed):
                 with access.operation(project):
                     pytest.fail("ordinary admission opened")
+
+
+@pytest.mark.parametrize("assignment", [None, {"state": "active"},
+    {"state": "active", "supersedes": [{"label": "wagon wheel", "object_id": "object_0004"}]}])
+@pytest.mark.parametrize("boundary", [None, "registry-pair-before-commit", "registry-pair-after-commit"])
+def test_legacy_active_import_with_curation_history_replays_without_override(monkeypatch, assignment, boundary):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    from services.resource_publication import _validation
+    from services.resource_resolution import resolve_silhouette
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project, first_record={"assignment": assignment} if assignment else None)
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                def legacy_validation(owner, frozen, database, state, expected, metadata, binding, kind, mode):
+                    return _validation(store, database, binding, metadata, kind, mode), None
+                with monkeypatch.context() as legacy:
+                    legacy.setattr(store, "_validate_fixture_pair", legacy_validation)
+                    if boundary:
+                        def stop(phase):
+                            if phase == boundary:
+                                with sqlite3.connect(preparation.as_uri() + "?mode=ro", uri=True) as snapshot:
+                                    assert snapshot.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == (1 if phase == "registry-pair-after-commit" else 0)
+                                raise RuntimeError("legacy interrupted")
+                        with pytest.raises(RuntimeError, match="legacy interrupted"):
+                            store.import_fixture_pair(owner, frozen, instance, "silhouettes", interrupt=stop)
+                    assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") == 1
+                committed = digest(preparation)
+                for _ in range(2):
+                    assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") == 1
+                    assert resolve_silhouette(project, instance, registry=preparation)["record"].get("assignment") == assignment
+                    assert digest(preparation) == committed
+
+
+def test_legacy_active_questionable_import_requires_explicit_assignment_transition(monkeypatch):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    from services.resource_publication import _validation
+    from services.resource_resolution import resolve_silhouette
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project, historical_questionable=True, first_values=["barber pants"])
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                def legacy_validation(owner, frozen, database, state, expected, metadata, binding, kind, mode):
+                    return _validation(store, database, binding, metadata, kind, mode), None
+                with monkeypatch.context() as legacy:
+                    legacy.setattr(store, "_validate_fixture_pair", legacy_validation)
+                    assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") == 1
+                committed = digest(preparation)
+                for _ in range(2):
+                    with pytest.raises(ValueError, match="Conflicting existing location/import evidence"):
+                        store.import_fixture_pair(owner, frozen, instance, "silhouettes")
+                    for active_only in (True, False):
+                        with pytest.raises(ValueError, match="lacks committed inactive assignment"):
+                            resolve_silhouette(project, instance, registry=preparation, active_only=active_only)
+                    assert digest(preparation) == committed
+
+
+@pytest.mark.parametrize("corruption", ["record_path", "image_path", "record_sha256", "image_sha256", "expected_revision",
+    "maintenance_operation", "assignment", "instance_id", "kind", "mode", "unfinished", "missing", "location_image", "location_revision"])
+def test_completed_import_replay_refuses_contradictory_commitments(corruption):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project)
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") == 1
+                with sqlite3.connect(preparation) as database:
+                    operation_id, payload = database.execute("SELECT operation_id,details FROM publication_operations").fetchone()
+                    details = json.loads(payload)
+                    if corruption in ("instance_id", "kind", "mode"):
+                        replacement = {"instance_id": records[1][1], "kind": "engravings", "mode": "frame"}[corruption]
+                        database.execute("UPDATE publication_operations SET " + corruption + "=?", (replacement,))
+                    elif corruption == "unfinished":
+                        database.execute("UPDATE publication_operations SET state='files_published'")
+                    elif corruption == "missing":
+                        database.execute("DELETE FROM publication_operations")
+                    elif corruption == "location_image":
+                        with pytest.raises(sqlite3.IntegrityError, match="Immutable ownership"):
+                            database.execute("UPDATE resource_locations SET image_path=image_path||'.other'")
+                        details["image_path"] += ".other"
+                        database.execute("UPDATE publication_operations SET details=? WHERE operation_id=?", (json.dumps(details), operation_id))
+                    elif corruption == "location_revision":
+                        database.execute("UPDATE resource_locations SET revision=2")
+                    else:
+                        details[corruption] = {"expected_revision": 1, "assignment": {"state": "inactive"}}.get(corruption, "contradictory")
+                        database.execute("UPDATE publication_operations SET details=? WHERE operation_id=?", (json.dumps(details), operation_id))
+                contradictory = digest(preparation)
+                for _ in range(2):
+                    with pytest.raises(ValueError, match="Conflicting existing location/import evidence"):
+                        store.import_fixture_pair(owner, frozen, instance, "silhouettes")
+                    assert digest(preparation) == contradictory
 
 
 @pytest.mark.parametrize("boundary", [None, "registry-pair-before-commit", "registry-pair-after-commit"])
@@ -438,6 +549,47 @@ def test_historical_assignment_corruption_fails_closed(tamper):
                         database.execute("DELETE FROM meta WHERE key='historical_import_operation'")
                 with pytest.raises(ValueError):
                     resolve_silhouette(project, instance, registry=preparation, active_only=False)
+
+
+def test_complete_graph_recovers_legacy_active_import_history(monkeypatch):
+    from data.resource_storage import ResourceStore
+    from services.resource_graph import install_fixture_graph
+    from services.resource_publication import _validation
+    from services.resource_resolution import resolve_silhouette
+    assignment = {"state": "active", "supersedes": [{"label": "wagon wheel", "object_id": "object_0004"}]}
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _full_fixture(project, first_record={"assignment": assignment})
+        preparation_before = preparation.read_bytes()
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            arguments = {"approved_digest": checksum, "plan_identity": "2B.3d", "clients_stopped": True}
+            candidate = project / "data/indexes/.graph-graph.sqlite3"
+            def legacy_validation(store, owner, frozen, database, state, expected, metadata, binding, kind, mode):
+                return _validation(store, database, binding, metadata, kind, mode), None
+            def stop(phase):
+                if phase == "registry-pair-after-commit":
+                    with sqlite3.connect(candidate.as_uri() + "?mode=ro", uri=True) as database:
+                        payload = database.execute("SELECT details FROM publication_operations WHERE instance_id=?", (instance,)).fetchone()
+                    if payload:
+                        assert "assignment" not in json.loads(payload[0])
+                        raise RuntimeError("legacy graph interrupted")
+            with monkeypatch.context() as legacy:
+                legacy.setattr(ResourceStore, "_validate_fixture_pair", legacy_validation)
+                with pytest.raises(RuntimeError, match="legacy graph interrupted"):
+                    install_fixture_graph(owner, plan, **arguments, interrupt=stop)
+            for _ in range(2):
+                assert install_fixture_graph(owner, plan, **arguments)["graph_accepted"]
+                registry = project / "data/indexes/resources.sqlite3"
+                with access.fixture_graph_access(owner):
+                    assert resolve_silhouette(project, instance, registry=registry)["record"]["assignment"] == assignment
+                with sqlite3.connect(registry) as database:
+                    assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 6
+                    details = json.loads(database.execute("SELECT details FROM publication_operations WHERE instance_id=?", (instance,)).fetchone()[0])
+                    assert "assignment" not in details
+            assert preparation.read_bytes() == preparation_before
+            assert all((project / reference).is_file() for reference in OUTPUTS)
 
 
 @pytest.mark.parametrize("boundary", [None, "registry-pair-before-commit", "registry-pair-after-commit"])
