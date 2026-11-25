@@ -888,6 +888,9 @@ def install_fixture_registry(owner, plan, *, approved_digest, plan_identity, cli
             raise ValueError("Prepared registry content changed")
         with renames.journal_window(writing=True):
             store = ResourceStore(project, candidate, approved=True)
+            with store.transaction() as database:
+                database.execute("""CREATE INDEX IF NOT EXISTS historical_exclusions_by_instance
+                    ON publication_operations(instance_id) WHERE kind='historical-exclusion'""")
         for collection in frozen.execute("SELECT * FROM collections ORDER BY media_type,media_id"):
             with renames.journal_window(writing=True):
                 store.import_fixture_collection(owner, frozen, collection)
@@ -897,8 +900,8 @@ def install_fixture_registry(owner, plan, *, approved_digest, plan_identity, cli
                     store.import_fixture_run(owner, frozen, metadata["generation_run_plan"], interrupt=interrupt)
             for row in frozen.execute("SELECT f.source,f.instance_id,coalesce(f.mode,'') AS mode FROM files f JOIN transformations t USING(source) WHERE t.schema=? ORDER BY f.instance_id", (schema,)):
                 with renames.journal_window(writing=True):
-                    store.import_fixture_pair(owner, frozen, row["instance_id"], kind, row["mode"], metadata_source=row["source"], interrupt=interrupt)
-                renames._event(interrupt, "registry-pair-committed")
+                    revision = store.import_fixture_pair(owner, frozen, row["instance_id"], kind, row["mode"], metadata_source=row["source"], interrupt=interrupt)
+                renames._event(interrupt, "registry-exclusion-committed" if revision is None else "registry-pair-committed")
         with closing(migration.readonly(candidate)) as checked:
             _integrity(checked)
         _file_sync(candidate)
@@ -1041,6 +1044,7 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
     state, project, path, _, _ = _handoff(owner, plan, approved_digest, plan_identity, clients_stopped, verify_resources=False)
     failures = []
     total = 0
+    silhouette_accounting = None
     def fail(category, source, detail):
         nonlocal total
         total += 1
@@ -1075,7 +1079,14 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                 except (ValueError, OSError) as error:
                     fail("changed_content", reference, str(error))
             expected_pairs = frozen.execute("SELECT count(*) FROM transformations WHERE schema IN ('silhouette-v1','engraving-v2')").fetchone()[0]
-            if installed.execute("SELECT count(*) FROM resource_locations").fetchone()[0] != expected_pairs:
+            store = ResourceStore(project, registry, approved=True)
+            exclusions = store.verify_fixture_exclusions(owner, frozen, installed)
+            published = installed.execute("SELECT count(*) FROM resource_locations").fetchone()[0]
+            frozen_silhouettes = frozen.execute("SELECT count(*) FROM transformations WHERE schema='silhouette-v1'").fetchone()[0]
+            published_silhouettes = installed.execute("SELECT count(*) FROM resource_locations WHERE kind='silhouettes'").fetchone()[0]
+            silhouette_accounting = {"frozen": frozen_silhouettes, "published": published_silhouettes,
+                                     "excluded": exclusions, "unfinished": max(0, frozen_silhouettes - published_silhouettes - exclusions)}
+            if published + exclusions != expected_pairs:
                 fail("incorrect_identity", "registry", "publication membership count differs")
             if installed.execute("SELECT count(*) FROM annotation_layouts").fetchone()[0] != frozen.execute("SELECT count(*) FROM collections").fetchone()[0]:
                 fail("stale_reference", "annotation_layouts", "collection membership differs")
@@ -1255,7 +1266,8 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                     fail("stale_reference", "consumer_context", str(error))
     except (ValueError, OSError, KeyError, TypeError, IndexError, sqlite3.Error, access.MaintenanceError) as error:
         fail("interrupted_installation", "graph", str(error))
-    return {"graph_accepted": total == 0, "failure_count": total, "failures": failures, "ordinary_consumers_enabled": False}
+    return {"graph_accepted": total == 0, "failure_count": total, "failures": failures,
+            "silhouette_accounting": silhouette_accounting, "ordinary_consumers_enabled": False}
 
 
 @_fixture_access

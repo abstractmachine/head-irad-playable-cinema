@@ -369,6 +369,8 @@ def publish_resource(project, registry, instance_id, kind, metadata, image, *, m
         pending = database.execute("SELECT 1 FROM publication_operations WHERE kind!='dirty-propagation' AND NOT (kind IN ('annotation-collection','silhouettes') AND state='committed' AND operation_id||'dirty'=?) AND state NOT IN ('finished','rolled_back')", (_propagation_id or "",)).fetchone()
         if pending:
             raise ValueError("Pending publication requires explicit recovery")
+        if database.execute("SELECT 1 FROM publication_operations WHERE instance_id=? AND kind='historical-exclusion'", (instance_id,)).fetchone():
+            raise ValueError("Historically excluded resource cannot be published")
         binding = locations.registered_instance(project, registry, instance_id)
         if (kind != "silhouettes" or binding["locations"]
             or json.loads(binding["legacy_identity"]).get("registration_kind") != "extraction"):

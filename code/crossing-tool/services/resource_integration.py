@@ -129,7 +129,7 @@ def _verify_graph(owner, record, interrupt=None):
         for kind in ("silhouettes", "engravings"):
             for media_type in ("movie", "gameplay"):
                 for item in indexed_publications(project, kind, media_type):
-                    resolved = resolve_silhouette(project, item["instance_id"]) if kind == "silhouettes" else resolve_engraving(project, item["source_instance_id"], mode=item["mode"])
+                    resolved = resolve_silhouette(project, item["instance_id"], active_only=False) if kind == "silhouettes" else resolve_engraving(project, item["source_instance_id"], mode=item["mode"])
                     if resolved["layout"] != "media-first-v1":
                         raise ValueError("Consumer did not resolve canonical layout")
     return result

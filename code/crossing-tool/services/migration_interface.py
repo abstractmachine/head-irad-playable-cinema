@@ -292,11 +292,16 @@ def status(project, plan, checksum, operation):
         with _evidence_database(project, reference) as database:
             if database.execute("SELECT 1 FROM sqlite_master WHERE name='resource_locations'").fetchone():
                 completed = database.execute("SELECT count(*) FROM resource_locations").fetchone()[0]
-                result["progress"]["publication_pairs"] = {"completed": completed, "total": 668051 if project == PROJECT else None}
-                if _fixture(project):
-                    with _evidence_database(project, str(plan.relative_to(project))) as frozen:
-                        total = frozen.execute("SELECT count(*) FROM transformations WHERE schema IN ('silhouette-v1','engraving-v2')").fetchone()[0]
-                    result["progress"]["publication_pairs"].update(total=total, remaining=max(0, total - completed))
+                excluded = database.execute("SELECT count(*) FROM publication_operations WHERE kind='historical-exclusion' AND state='finished'").fetchone()[0]
+                with _evidence_database(project, str(plan.relative_to(project))) as frozen:
+                    planned = dict(frozen.execute("SELECT schema,count(*) FROM transformations WHERE schema IN ('silhouette-v1','engraving-v2') GROUP BY schema"))
+                total = sum(planned.values())
+                result["progress"]["publication_pairs"] = {"completed": completed, "total": total,
+                    "excluded": excluded, "remaining": max(0, total - completed - excluded)}
+                silhouettes = database.execute("SELECT count(*) FROM resource_locations WHERE kind='silhouettes'").fetchone()[0]
+                frozen_silhouettes = planned.get("silhouette-v1", 0)
+                result["progress"]["silhouette_identities"] = {"total": frozen_silhouettes, "published": silhouettes,
+                    "excluded": excluded, "remaining": max(0, frozen_silhouettes - silhouettes - excluded)}
         break
     return result
 

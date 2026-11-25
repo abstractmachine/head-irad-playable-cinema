@@ -92,12 +92,12 @@ def _canonical_fixture(project, *, historical_questionable=False, first_record=N
     return plan, digest(plan), preparation, records
 
 
-def _full_fixture(project, *, historical_questionable=False, first_record=None):
+def _full_fixture(project, *, historical_questionable=False, first_record=None, first_image_bytes=None):
     from data import resource_locations as locations
     from data.resource_storage import ResourceStore
     from services.frame_match import best_frame_path
     from services.resource_migration import _reference
-    plan, _, preparation, records = _canonical_fixture(project, historical_questionable=historical_questionable, first_record=first_record)
+    plan, _, preparation, records = _canonical_fixture(project, historical_questionable=historical_questionable, first_record=first_record, first_image_bytes=first_image_bytes)
     store = ResourceStore(project, preparation, approved=True)
     with sqlite3.connect(plan) as database:
         database.execute("ALTER TABLE collections ADD COLUMN revision INTEGER NOT NULL DEFAULT 0")
@@ -129,6 +129,178 @@ def _full_fixture(project, *, historical_questionable=False, first_record=None):
             database.execute("INSERT INTO index_transitions VALUES(?,?,?,?)", (reference, "existing index owner", "rebuild", "verified graph"))
         database.execute("UPDATE meta SET value=? WHERE key='inputs'", (json.dumps({str(preparation.relative_to(project)): digest(preparation)}),))
     return plan, digest(plan), preparation, records
+
+
+def _zero_fixture(project, *, base_factory=_canonical_fixture, historical_questionable=False, empty_index=0):
+    plan, _, preparation, records = base_factory(project, historical_questionable=historical_questionable)
+    _record, instance, legacy, _media = records[empty_index]
+    image = legacy.with_suffix(".png")
+    image.write_bytes(b"")
+    source = str(image.relative_to(project))
+    with sqlite3.connect(plan) as database:
+        destination = database.execute("SELECT destination FROM files WHERE source=?", (source,)).fetchone()[0]
+        database.execute("DELETE FROM files WHERE source=?", (source,))
+        _file(database, project, source, destination, "Move", "services.resource_publication", instance_id=instance, hash_bytes=True)
+        database.execute("INSERT INTO silhouettes(legacy_json,legacy_png,registration_key,instance_id,destination) SELECT legacy_json,legacy_png,registration_key,instance_id,? FROM identity_bindings WHERE instance_id=?", (str(Path(destination).parent), instance))
+    return plan, digest(plan), preparation, records
+
+
+@pytest.mark.parametrize("boundary", [None, "registry-exclusion-before-commit", "registry-exclusion-after-commit"])
+def test_historical_zero_exclusion_is_atomic_and_replays(boundary):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    from services.resource_publication import publication_status
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _zero_fixture(project)
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                def stop(phase):
+                    if phase == boundary:
+                        raise RuntimeError("exclusion interrupted")
+                if boundary:
+                    with pytest.raises(RuntimeError, match="exclusion interrupted"):
+                        store.import_fixture_pair(owner, frozen, instance, "silhouettes", interrupt=stop)
+                    assert len(publication_status(project, preparation)) == int(boundary.endswith("after-commit"))
+                for _repeat in range(2):
+                    assert store.import_fixture_pair(owner, frozen, instance, "silhouettes") is None
+                operations = publication_status(project, preparation)
+                assert len(operations) == 1
+                assert operations[0]["kind"] == "historical-exclusion" and operations[0]["state"] == "finished"
+                details = operations[0]["details"]
+                assert details["reason"] == "historical-zero-byte-png" and "assignment" not in details
+                assert details["plan_sha256"] == checksum
+                assert (project / details["image_path"]).read_bytes() == b""
+                with closing(readonly(preparation)) as database:
+                    assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
+                    assert store.verify_fixture_exclusions(owner, frozen, database) == 1
+
+
+@pytest.mark.parametrize("payload", [b"not a PNG", b"\x89PNG\r\n\x1a\n"])
+def test_nonzero_invalid_png_is_never_excluded(payload):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _canonical_fixture(project, first_image_bytes=payload,
+            first_record={"exclusion_reason": "historical-zero-byte-png"})
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                with pytest.raises((ValueError, OSError, SyntaxError)):
+                    ResourceStore(project, preparation, approved=True).import_fixture_pair(owner, frozen, records[0][1], "silhouettes")
+                with closing(readonly(preparation)) as database:
+                    assert database.execute("SELECT count(*) FROM publication_operations").fetchone()[0] == 0
+                    assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
+
+
+@pytest.mark.parametrize("defect", ["installed-image", "missing-image", "metadata", "before-image", "unfinished-transform",
+    "wrong-hash", "wrong-size", "wrong-identity", "wrong-destination", "wrong-registration", "missing-role",
+    "conflicting-publication", "conflicting-location", "wrong-operation", "duplicate", "unfinished", "reason", "assignment"])
+def test_zero_exclusion_refuses_conflicting_evidence(defect):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _zero_fixture(project)
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                store = ResourceStore(project, preparation, approved=True)
+                image = project / frozen.execute("SELECT destination FROM files WHERE instance_id=? AND disposition='Move'", (instance,)).fetchone()[0]
+                metadata = image.with_suffix(".json")
+                store.import_fixture_pair(owner, frozen, instance, "silhouettes")
+                if defect == "installed-image":
+                    image.write_bytes(b"not empty")
+                elif defect == "missing-image":
+                    image.unlink()
+                elif defect == "metadata":
+                    metadata.write_text('{}')
+                elif defect in ("before-image", "unfinished-transform"):
+                    journal = project / access.CONTROL / "graph-graph.sqlite3"
+                    with sqlite3.connect(journal) as evidence:
+                        number = evidence.execute("SELECT number FROM transforms WHERE source=?", (str(records[0][2].relative_to(project)),)).fetchone()[0]
+                        if defect == "unfinished-transform":
+                            evidence.execute("UPDATE transforms SET state='intent' WHERE number=?", (number,))
+                        else:
+                            (journal.with_suffix("") / (str(number) + ".before")).write_text('{}')
+                elif defect in ("wrong-hash", "wrong-size", "wrong-identity", "wrong-destination", "wrong-registration", "missing-role"):
+                    with sqlite3.connect(plan) as changed:
+                        if defect == "wrong-hash":
+                            changed.execute("UPDATE files SET sha256=? WHERE destination=?", ("0" * 64, str(image.relative_to(project))))
+                        elif defect == "wrong-size":
+                            changed.execute("UPDATE files SET size=1 WHERE destination=?", (str(image.relative_to(project)),))
+                        elif defect == "wrong-identity":
+                            changed.execute("UPDATE identity_bindings SET legacy_identity='{}' WHERE instance_id=?", (instance,))
+                        elif defect == "wrong-destination":
+                            changed.execute("UPDATE silhouettes SET destination='data/silhouettes/elsewhere'")
+                        elif defect == "wrong-registration":
+                            changed.execute("UPDATE silhouettes SET registration_key='different'")
+                        else:
+                            changed.execute("DELETE FROM silhouettes")
+                else:
+                    with sqlite3.connect(preparation) as database:
+                        if defect == "conflicting-location":
+                            database.execute("INSERT INTO resource_locations VALUES(?, 'silhouettes','','media-first-v1',1,?,?, 'objects','tree',?,?)", (instance, str(metadata.relative_to(project)), str(image.relative_to(project)), digest(metadata), digest(image)))
+                        elif defect == "conflicting-publication":
+                            database.execute("UPDATE publication_operations SET kind='silhouettes'")
+                        elif defect == "wrong-operation":
+                            database.execute("UPDATE publication_operations SET operation_id='other-operation'")
+                        elif defect == "duplicate":
+                            database.execute("INSERT INTO publication_operations SELECT 'duplicate',instance_id,kind,mode,state,details FROM publication_operations")
+                        elif defect == "unfinished":
+                            database.execute("UPDATE publication_operations SET state='prepared'")
+                        else:
+                            details = json.loads(database.execute("SELECT details FROM publication_operations").fetchone()[0])
+                            details[defect] = {"state": "active"} if defect == "assignment" else "different"
+                            database.execute("UPDATE publication_operations SET details=?", (json.dumps(details),))
+                with pytest.raises((ValueError, OSError, TypeError)):
+                    store.import_fixture_pair(owner, frozen, instance, "silhouettes")
+
+
+@pytest.mark.parametrize("defect", ["installed-image", "metadata", "frozen-hash", "registration", "source", "destination"])
+def test_zero_initial_import_refuses_ineligible_evidence(defect):
+    from contextlib import closing
+    from data.resource_storage import ResourceStore
+    from services.resource_migration import readonly
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _zero_fixture(project)
+        instance = records[0][1]
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            execute_fixture_renames(owner, plan, approved_digest=checksum, plan_identity="2B.3d", clients_stopped=True)
+            _execute(owner, plan, checksum)
+            with access.fixture_graph_access(owner), closing(readonly(plan)) as frozen:
+                image = project / frozen.execute("SELECT destination FROM files WHERE instance_id=? AND disposition='Move'", (instance,)).fetchone()[0]
+                if defect == "installed-image":
+                    image.write_bytes(b"not empty")
+                elif defect == "metadata":
+                    image.with_suffix(".json").write_text('{}')
+                else:
+                    with sqlite3.connect(plan) as changed:
+                        if defect == "frozen-hash":
+                            changed.execute("UPDATE files SET sha256=? WHERE destination=?", ("0" * 64, str(image.relative_to(project))))
+                        elif defect == "registration":
+                            changed.execute("UPDATE silhouettes SET registration_key='wrong'")
+                        elif defect == "source":
+                            changed.execute("UPDATE silhouettes SET legacy_png='data/different.png'")
+                        else:
+                            changed.execute("UPDATE silhouettes SET destination='data/silhouettes/elsewhere'")
+                with pytest.raises((ValueError, OSError)):
+                    ResourceStore(project, preparation, approved=True).import_fixture_pair(owner, frozen, instance, "silhouettes")
+                with closing(readonly(preparation)) as database:
+                    assert database.execute("SELECT count(*) FROM publication_operations").fetchone()[0] == 0
+                    assert database.execute("SELECT count(*) FROM resource_locations").fetchone()[0] == 0
 
 
 def _fixture(project):

@@ -222,6 +222,144 @@ def test_cli_registry_resume_twice_preserves_pairs_and_matches_uninterrupted(pre
             pytest.fail("Completed resume released maintenance")
 
 
+@pytest.mark.parametrize("boundary", [None, "registry-exclusion-before-commit", "registry-exclusion-after-commit"])
+def test_cli_historical_exclusion_recovers_twice_and_accepts(capsys, monkeypatch, boundary):
+    from test_resource_graph import _zero_fixture, _full_fixture
+    from services.resource_migration import readonly
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records = _zero_fixture(project, base_factory=_full_fixture, historical_questionable=True, empty_index=1)
+        with sqlite3.connect(preparation) as database:
+            database.execute("DROP INDEX historical_exclusions_by_instance")
+        with sqlite3.connect(plan) as database:
+            database.execute("UPDATE meta SET value=? WHERE key='inputs'", (json.dumps({str(preparation.relative_to(project)): digest(preparation)}),))
+        checksum = digest(plan)
+        prepared = project, plan, checksum
+        original = interface.dispatch
+        journal = project / access.CONTROL / "graph-cli-fixture.sqlite3"
+        candidate = project / "data/indexes/.graph-cli-fixture.sqlite3"
+        before = None
+        if boundary:
+            def stop(event):
+                if event == boundary:
+                    raise RuntimeError("exclusion CLI interrupted")
+            monkeypatch.setattr(interface, "dispatch", lambda args, **options: original(args, interrupt=stop, **options))
+            with pytest.raises(SystemExit, match="exclusion CLI interrupted"):
+                _run(prepared, "start", capsys)
+            capsys.readouterr()
+            with closing(readonly(candidate)) as database:
+                before = database.execute("SELECT * FROM resource_locations ORDER BY instance_id").fetchall()
+                assert len(before) == 4
+                prior_operations = database.execute("SELECT * FROM publication_operations WHERE kind='silhouettes'").fetchall()
+            with closing(readonly(journal)) as database:
+                transforms = database.execute("SELECT * FROM transforms ORDER BY number").fetchall()
+            with pytest.raises(SystemExit, match="exclusion CLI interrupted"):
+                _run(prepared, "resume", capsys)
+            capsys.readouterr()
+            with closing(readonly(candidate)) as database:
+                assert database.execute("SELECT * FROM resource_locations ORDER BY instance_id").fetchall() == before
+                assert database.execute("SELECT * FROM publication_operations WHERE kind='silhouettes'").fetchall() == prior_operations
+        monkeypatch.setattr(interface, "dispatch", original)
+        assert _run(prepared, "resume" if boundary else "start", capsys)["graph_accepted"]
+        assert _run(prepared, "resume", capsys)["graph_accepted"]
+        snapshot = _run(prepared, "status", capsys)
+        assert snapshot["progress"]["silhouette_identities"] == {"total": 6, "published": 5, "excluded": 1, "remaining": 0}
+        assert snapshot["progress"]["publication_pairs"]["completed"] == 5
+        assert _run(prepared, "validate", capsys)["silhouette_accounting"] == {"frozen": 6, "published": 5, "excluded": 1, "unfinished": 0}
+        installed = project / "data/indexes/resources.sqlite3"
+        with closing(readonly(installed)) as database:
+            query_plan = database.execute("EXPLAIN QUERY PLAN SELECT 1 FROM publication_operations WHERE instance_id=? AND kind='historical-exclusion'", (records[1][1],)).fetchall()
+            assert any("SEARCH" in row[3] and "historical_exclusions_by_instance" in row[3] for row in query_plan)
+            assert database.execute("SELECT count(*) FROM resource_locations WHERE instance_id=?", (records[1][1],)).fetchone()[0] == 0
+            assert database.execute("SELECT count(*) FROM publication_operations WHERE kind='historical-exclusion'").fetchone()[0] == 1
+            assert database.execute("SELECT count(*) FROM publication_operations WHERE kind='silhouettes'").fetchone()[0] == 5
+            if before is not None:
+                assert all(row in database.execute("SELECT * FROM resource_locations").fetchall() for row in before)
+                assert all(row in database.execute("SELECT * FROM publication_operations WHERE kind='silhouettes'").fetchall() for row in prior_operations)
+        if before is not None:
+            with closing(readonly(journal)) as database:
+                assert database.execute("SELECT * FROM transforms ORDER BY number").fetchall() == transforms
+        assert digest(plan) == checksum
+        assert _run(prepared, "accept", capsys)["state"] == "accepted"
+        assert _run(prepared, "release", capsys)["maintenance_released"]
+
+
+def test_excluded_resource_is_administrative_evidence_not_discovery(capsys, monkeypatch, tmp_path):
+    from test_resource_graph import _zero_fixture, _full_fixture
+    from mcp_server import mcp_server as server
+    from services.resource_resolution import indexed_publications, resolve_silhouette, resolve_source_silhouette
+    from services.resource_publication import publication_status, publish_resource
+    from services.silhouette_discovery import list_active_candidate_references
+    from visualizers.components.illustration_source import SilhouetteSource
+    from PIL import Image
+    with access.temporary_rename_project() as project:
+        plan, checksum, _, records = _zero_fixture(project, base_factory=_full_fixture, historical_questionable=True, empty_index=1)
+        prepared = project, plan, checksum
+        for action in ("start", "accept", "release"):
+            _run(prepared, action, capsys)
+        instance = records[1][1]
+        registry = project / "data/indexes/resources.sqlite3"
+        operations = publication_status(project, registry, instance_id=instance)
+        assert len(operations) == 1 and operations[0]["kind"] == "historical-exclusion"
+        details = operations[0]["details"]
+        assert details["reason"] == "historical-zero-byte-png" and "assignment" not in details
+        original_png = project / details["image_path"]
+        original_metadata = project / details["record_path"]
+        metadata_bytes = original_metadata.read_bytes()
+        assert original_png.read_bytes() == b""
+        assert instance not in {record["instance_id"] for record in indexed_publications(project, "silhouettes", "movie")}
+        for resolve in (lambda: resolve_silhouette(project, instance),
+                        lambda: resolve_silhouette(project, instance, active_only=False),
+                        lambda: resolve_source_silhouette(project, registry=registry, instance_id=instance)):
+            with pytest.raises((ValueError, FileNotFoundError)):
+                resolve()
+        candidates = list_active_candidate_references(project, word="tree", field="objects")
+        assert candidates["entries"] and instance not in json.dumps(candidates)
+        monkeypatch.setattr(cli.prefs, "get", lambda key, default=None: str(project) if key == "path" else default)
+        monkeypatch.setattr(server, "_ctx", lambda: (str(project), "movie"))
+        for response in (server.list_silhouette_candidates("tree", field="objects"), server.list_silhouettes("tree", field="objects")):
+            assert json.loads(response)["entries"] and instance not in response
+        args = cli.build_parser().parse_args(["index", "silhouette", "list", "tree", "--field", "objects", "--json"])
+        args.func(args)
+        response = capsys.readouterr().out
+        assert json.loads(response)["entries"] and instance not in response
+        source = SilhouetteSource(str(project))
+        assert instance not in json.dumps(source.page(field="objects"), default=str)
+        assert source.records(field="objects")
+        assert instance not in {record["instance_id"] for record in source.records(field="objects")}
+        replacement = tmp_path / "valid.png"
+        Image.new("RGBA", (2, 2), (20, 40, 60, 255)).save(replacement)
+        with pytest.raises(ValueError, match="Historically excluded"):
+            publish_resource(project, registry, instance, "silhouettes", json.loads(metadata_bytes), replacement, approved=True)
+        assert original_metadata.read_bytes() == metadata_bytes and original_png.read_bytes() == b""
+        assert publication_status(project, registry, instance_id=instance) == operations
+
+
+@pytest.mark.parametrize("defect", ["missing", "reason", "maintenance_operation", "registration_key", "plan_sha256", "image_sha256", "unfinished"])
+def test_cli_exclusion_corruption_blocks_resume_and_acceptance(capsys, defect):
+    from test_resource_graph import _zero_fixture, _full_fixture
+    with access.temporary_rename_project() as project:
+        plan, checksum, _, _ = _zero_fixture(project, base_factory=_full_fixture)
+        prepared = project, plan, checksum
+        assert _run(prepared, "start", capsys)["graph_accepted"]
+        registry = project / "data/indexes/resources.sqlite3"
+        with sqlite3.connect(registry) as database:
+            if defect == "missing":
+                database.execute("DELETE FROM publication_operations WHERE kind='historical-exclusion'")
+            elif defect == "unfinished":
+                database.execute("UPDATE publication_operations SET state='prepared' WHERE kind='historical-exclusion'")
+            else:
+                details = json.loads(database.execute("SELECT details FROM publication_operations WHERE kind='historical-exclusion'").fetchone()[0])
+                details[defect] = "contradictory"
+                database.execute("UPDATE publication_operations SET details=? WHERE kind='historical-exclusion'", (json.dumps(details),))
+        before = registry.read_bytes()
+        for action in ("resume", "validate", "accept"):
+            with pytest.raises(SystemExit):
+                _run(prepared, action, capsys)
+            capsys.readouterr()
+            assert registry.read_bytes() == before
+            assert access.status(project)["state"] == "maintenance"
+
+
 @pytest.mark.parametrize("boundary", ["intent-committed", "renamed"])
 def test_cli_repeated_resume_reconciles_without_duplicate_moves(prepared, capsys, monkeypatch, boundary):
     from services import resource_rename as renames

@@ -179,6 +179,8 @@ def _install_schema(database):
       details TEXT NOT NULL);
     CREATE UNIQUE INDEX one_pending_publication ON publication_operations(instance_id,kind,mode)
       WHERE state NOT IN ('finished','rolled_back');
+        CREATE INDEX historical_exclusions_by_instance ON publication_operations(instance_id)
+            WHERE kind='historical-exclusion';
     CREATE TABLE classification_corrections(
       correction_id TEXT PRIMARY KEY,reference TEXT NOT NULL,before_sha256 TEXT NOT NULL,
       field TEXT NOT NULL,approval TEXT NOT NULL,details TEXT NOT NULL);
@@ -217,6 +219,8 @@ def upgrade_collection_journal(project, registry, *, approved=False):
         database.execute("DROP TABLE previous_publication_operations")
         database.execute("""CREATE UNIQUE INDEX one_pending_publication ON publication_operations(instance_id,kind,mode)
             WHERE state NOT IN ('finished','rolled_back')""")
+        database.execute("""CREATE INDEX historical_exclusions_by_instance ON publication_operations(instance_id)
+            WHERE kind='historical-exclusion'""")
         return {"upgraded": True}
 
 
@@ -559,9 +563,69 @@ class ResourceStore:
                 validation["state"] = "valid"
         return validation, assignment
 
+    def _historical_exclusion(self, owner, frozen, database, state, expected, metadata, binding, image, operation_id, interrupt=None, *, verify_only=False):
+        empty_sha256 = hashlib.sha256(b"").hexdigest()
+        role = frozen.execute("SELECT * FROM silhouettes WHERE instance_id=?", (binding["instance_id"],)).fetchone()
+        if (role is None or type(image["size"]) is not int or image["size"] != 0
+                or image["sha256"] != empty_sha256
+                or locations.project_file(self.project, image["destination"]).stat().st_size != 0
+                or role["legacy_json"] != expected["source"] or role["legacy_png"] != image["source"]
+                or role["registration_key"] != binding["registration_key"]
+                or binding["legacy_png"] != image["source"] or not isinstance(role["destination"], str)
+                or role["destination"] + "/silhouette.json" != expected["destination"]
+                or role["destination"] + "/silhouette.png" != image["destination"]
+                or (image["mode"] or "") != ""
+                or expected["instance_id"] != binding["instance_id"] or image["instance_id"] != binding["instance_id"]
+                or digest(locations.project_file(self.project, image["destination"])) != empty_sha256
+                or digest(locations.project_file(self.project, expected["destination"])) != expected["after_sha256"]):
+            raise ValueError("Historical zero-byte exclusion evidence differs")
+        self._historical_assignment(owner, frozen, state, expected, metadata, binding)
+        details = {"maintenance_operation": state["operation"], "plan_sha256": self._historical_plan[1],
+                   "instance_id": binding["instance_id"], "registration_key": binding["registration_key"],
+                   "resource_kind": "silhouettes", "mode": "", "reason": "historical-zero-byte-png",
+                   "record_source": expected["source"], "image_source": image["source"],
+                   "record_path": expected["destination"], "image_path": image["destination"],
+                   "source_record_sha256": expected["sha256"], "record_sha256": expected["after_sha256"],
+                   "image_sha256": image["sha256"]}
+        if database.execute("SELECT 1 FROM resource_locations WHERE instance_id=?", (binding["instance_id"],)).fetchone():
+            raise ValueError("Historical exclusion conflicts with published location")
+        operations = database.execute("SELECT * FROM publication_operations WHERE instance_id=? AND kind IN ('silhouettes','engravings','historical-exclusion')", (binding["instance_id"],)).fetchall()
+        if operations:
+            if (len(operations) != 1 or operations[0]["operation_id"] != operation_id
+                    or operations[0]["kind"] != "historical-exclusion" or operations[0]["mode"] != ""
+                    or operations[0]["state"] != "finished" or json.loads(operations[0]["details"]) != details):
+                raise ValueError("Conflicting historical exclusion/import evidence")
+        else:
+            if verify_only:
+                raise ValueError("Missing historical exclusion evidence")
+            database.execute("INSERT INTO publication_operations VALUES(?,?,?,'','finished',?)",
+                             (operation_id, binding["instance_id"], "historical-exclusion", json.dumps(details, sort_keys=True)))
+        if interrupt is not None:
+            interrupt("registry-exclusion-before-commit")
+
+    def verify_fixture_exclusions(self, owner, frozen, database):
+        state = self._fixture_state(owner)
+        excluded = 0
+        for operation in database.execute("SELECT * FROM publication_operations WHERE kind='historical-exclusion'"):
+            binding = locations.registered_instance(self.project, self.registry, operation["instance_id"])
+            expected = frozen.execute("SELECT f.*,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.source=? AND t.schema='silhouette-v1' AND f.disposition='Transform' AND coalesce(f.mode,'')=''", (binding["legacy_json"],)).fetchone()
+            if expected is None:
+                raise ValueError("Historical exclusion lacks frozen metadata")
+            metadata = json.loads(locations.project_file(self.project, expected["destination"]).read_text())
+            validation, _assignment = self._validate_fixture_pair(owner, frozen, database, state, expected, metadata, binding, "silhouettes", "")
+            if validation["state"] != "valid":
+                raise ValueError("Historical exclusion metadata validation differs")
+            paths = validation["destination"]
+            image = frozen.execute("SELECT * FROM files WHERE instance_id=? AND destination=? AND disposition='Move'", (binding["instance_id"], relative_path(self.project, paths["image"]))).fetchone()
+            if image is None or expected["destination"] != relative_path(self.project, paths["metadata"]):
+                raise ValueError("Historical exclusion frozen destination differs")
+            operation_id = "graph-" + state["operation"] + "-" + hashlib.sha256((binding["instance_id"] + "silhouettes").encode()).hexdigest()
+            self._historical_exclusion(owner, frozen, database, state, expected, metadata, binding, image, operation_id, verify_only=True)
+            excluded += 1
+        return excluded
+
     def import_fixture_pair(self, owner, frozen, instance_id, kind, mode="", *, metadata_source=None, interrupt=None):
-        """Commit a verified relocated pair without copying or legacy fallback."""
-        from PIL import Image
+        """Publish a verified pair, or journal an authenticated empty silhouette; return its revision or None."""
         state = self._fixture_state(owner)
         schema = {"silhouettes": "silhouette-v1", "engravings": "engraving-v2"}[kind]
         query = "SELECT f.*,t.after_sha256 FROM files f JOIN transformations t USING(source) WHERE f.instance_id=? AND t.schema=? AND coalesce(f.mode,'')=? AND disposition='Transform'"
@@ -587,48 +651,59 @@ class ResourceStore:
             image = frozen.execute("SELECT * FROM files WHERE instance_id=? AND destination=? AND disposition='Move'", (instance_id, relative_path(self.project, paths["image"]))).fetchone()
             if image is None or metadata_path != paths["metadata"] or digest(locations.project_file(self.project, paths["image"])) != image["sha256"]:
                 raise ValueError("Frozen pair location/image association differs")
-            with Image.open(paths["image"]) as picture:
-                if picture.format != "PNG":
-                    raise ValueError("Relocated image must be PNG")
-                picture.verify()
-            previous = database.execute("SELECT * FROM resource_locations WHERE instance_id=? AND kind=? AND mode=?", (instance_id, kind, mode)).fetchone()
-            operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
-            if previous:
-                details = json.loads(operation["details"]) if operation else {}
-                recorded_assignment = details.get("assignment")
-                if ("assignment" not in details and assignment is not None
-                        and assignment == metadata.get("assignment") and assignment["state"] == "active"):
-                    recorded_assignment = assignment
-                commitments = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),
-                               "record_sha256": expected["after_sha256"], "image_sha256": image["sha256"]}
-                if (operation is None or operation["state"] != "finished"
-                        or any(operation[key] != value for key, value in (("instance_id", instance_id), ("kind", kind), ("mode", mode)))
-                        or any(previous[key] != value or details.get(key) != value for key, value in commitments.items())
-                        or previous["layout"] != "media-first-v1" or previous["revision"] != 1
-                        or previous["field"] != metadata["field"] or previous["label"] != metadata["label"]
-                        or details.get("expected_revision") != 0 or details.get("maintenance_operation") != state["operation"]
-                        or recorded_assignment != assignment):
-                    raise ValueError("Conflicting existing location/import evidence")
-                return previous["revision"]
-            details = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),
-                       "record_sha256": expected["after_sha256"], "image_sha256": image["sha256"],
-                       "expected_revision": 0, "metadata": metadata, "maintenance_operation": state["operation"]}
-            if assignment is not None:
-                details["assignment"] = assignment
-                existing = database.execute("SELECT value FROM meta WHERE key='historical_import_operation'").fetchone()
-                if existing and existing[0] != state["operation"]:
-                    raise ValueError("Historical import operation differs")
-                database.execute("INSERT OR IGNORE INTO meta VALUES('historical_import_operation',?)", (state["operation"],))
-            database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", (operation_id, instance_id, kind, mode, "files_published", json.dumps(details)))
-            revision = self.commit_location(database, binding, kind, mode, paths, metadata, 0, operation_id=operation_id)
-            details.pop("metadata")
-            details["metadata_evidence"] = "frozen-transform-and-record-sha256"
-            database.execute("UPDATE publication_operations SET state='finished',details=? WHERE operation_id=?", (json.dumps(details, ensure_ascii=False), operation_id))
-            if interrupt is not None:
-                interrupt("registry-pair-before-commit")
-        if interrupt is not None:
-            interrupt("registry-pair-after-commit")
+            if kind == "silhouettes" and image["size"] == 0:
+                self._historical_exclusion(owner, frozen, database, state, expected, metadata, binding, image, operation_id, interrupt)
+                revision = None
+                published = False
+            else:
+                revision, published = self._import_verified_fixture_pair(database, binding, kind, mode, state, expected, metadata, image, paths, assignment, operation_id, interrupt)
+        if interrupt is not None and (revision is None or published):
+            interrupt("registry-exclusion-after-commit" if revision is None else "registry-pair-after-commit")
         return revision
+
+    def _import_verified_fixture_pair(self, database, binding, kind, mode, state, expected, metadata, image, paths, assignment, operation_id, interrupt):
+        from PIL import Image
+        instance_id = binding["instance_id"]
+        with Image.open(paths["image"]) as picture:
+            if picture.format != "PNG":
+                raise ValueError("Relocated image must be PNG")
+            picture.verify()
+        previous = database.execute("SELECT * FROM resource_locations WHERE instance_id=? AND kind=? AND mode=?", (instance_id, kind, mode)).fetchone()
+        operation = database.execute("SELECT * FROM publication_operations WHERE operation_id=?", (operation_id,)).fetchone()
+        if previous:
+            details = json.loads(operation["details"]) if operation else {}
+            recorded_assignment = details.get("assignment")
+            if ("assignment" not in details and assignment is not None
+                    and assignment == metadata.get("assignment") and assignment["state"] == "active"):
+                recorded_assignment = assignment
+            commitments = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),
+                           "record_sha256": expected["after_sha256"], "image_sha256": image["sha256"]}
+            if (operation is None or operation["state"] != "finished"
+                    or any(operation[key] != value for key, value in (("instance_id", instance_id), ("kind", kind), ("mode", mode)))
+                    or any(previous[key] != value or details.get(key) != value for key, value in commitments.items())
+                    or previous["layout"] != "media-first-v1" or previous["revision"] != 1
+                    or previous["field"] != metadata["field"] or previous["label"] != metadata["label"]
+                    or details.get("expected_revision") != 0 or details.get("maintenance_operation") != state["operation"]
+                    or recorded_assignment != assignment):
+                raise ValueError("Conflicting existing location/import evidence")
+            return previous["revision"], False
+        details = {"record_path": expected["destination"], "image_path": relative_path(self.project, paths["image"]),
+                   "record_sha256": expected["after_sha256"], "image_sha256": image["sha256"],
+                   "expected_revision": 0, "metadata": metadata, "maintenance_operation": state["operation"]}
+        if assignment is not None:
+            details["assignment"] = assignment
+            existing = database.execute("SELECT value FROM meta WHERE key='historical_import_operation'").fetchone()
+            if existing and existing[0] != state["operation"]:
+                raise ValueError("Historical import operation differs")
+            database.execute("INSERT OR IGNORE INTO meta VALUES('historical_import_operation',?)", (state["operation"],))
+        database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", (operation_id, instance_id, kind, mode, "files_published", json.dumps(details)))
+        revision = self.commit_location(database, binding, kind, mode, paths, metadata, 0, operation_id=operation_id)
+        details.pop("metadata")
+        details["metadata_evidence"] = "frozen-transform-and-record-sha256"
+        database.execute("UPDATE publication_operations SET state='finished',details=? WHERE operation_id=?", (json.dumps(details, ensure_ascii=False), operation_id))
+        if interrupt is not None:
+            interrupt("registry-pair-before-commit")
+        return revision, True
 
     def __init__(self, project, registry, *, approved=False):
         if not approved:
@@ -736,6 +811,8 @@ class ResourceStore:
 
     def commit_location(self, database, binding, kind, mode, paths, metadata, expected_revision, *, operation_id):
         """Internal CAS commit; publication service owns pair validation/installation."""
+        if database.execute("SELECT 1 FROM publication_operations WHERE instance_id=? AND kind='historical-exclusion'", (binding["instance_id"],)).fetchone():
+            raise ValueError("Historically excluded resource cannot be published")
         record_path = relative_path(self.project, paths["metadata"])
         image_path = relative_path(self.project, paths["image"])
         if type(expected_revision) is not int or expected_revision < 0:
