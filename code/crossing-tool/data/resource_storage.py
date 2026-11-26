@@ -100,6 +100,7 @@ def unpublished_destination(project, path):
 
 
 _registry_lock_state = threading.local()
+_READ_RECOVERY_QUERY = "SELECT 1 FROM publication_operations WHERE state NOT IN ('finished','rolled_back') AND (state IN ('installing','files_published') OR (kind IN ('annotation-collection','silhouettes') AND state='committed')) LIMIT 1"
 
 
 @contextmanager
@@ -131,7 +132,7 @@ def _registry_lock(project, registry, *, exclusive=False):
         if not exclusive:
             with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
                 if database.execute("SELECT 1 FROM sqlite_master WHERE name='publication_operations'").fetchone():
-                    if database.execute("SELECT 1 FROM publication_operations WHERE state IN ('installing','files_published') OR (kind IN ('annotation-collection','silhouettes') AND state='committed') LIMIT 1").fetchone():
+                    if database.execute(_READ_RECOVERY_QUERY).fetchone():
                         raise ValueError("Explicit publication recovery required before lookup")
         yield
     finally:

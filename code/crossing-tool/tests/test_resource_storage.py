@@ -2594,6 +2594,101 @@ def test_registered_shot_navigation_context_is_preserved(writable, monkeypatch):
     assert delivered[0]["registry"] == registry
 
 
+@pytest.mark.parametrize("state", ["prepared", "installing", "files_published", "committed", "finished", "rolled_back"])
+@pytest.mark.parametrize("kind", ["silhouettes", "engravings", "annotation-collection", "historical-exclusion"])
+def test_read_recovery_query_preserves_every_state_and_kind(writable, state, kind):
+    from contextlib import closing
+    from data.resource_storage import _READ_RECOVERY_QUERY, registry_lock
+    project, registry, instance, content, image = writable
+    baseline = "SELECT 1 FROM publication_operations WHERE state IN ('installing','files_published') OR (kind IN ('annotation-collection','silhouettes') AND state='committed') LIMIT 1"
+    with ResourceStore(project, registry, approved=True).transaction() as database:
+        database.execute("INSERT INTO publication_operations VALUES(?,?,?,?,?,?)", ("read-state", instance, kind, "", state, "{}"))
+    with closing(sqlite3.connect(registry)) as database:
+        expected = database.execute(baseline).fetchone()
+        assert database.execute(_READ_RECOVERY_QUERY).fetchone() == expected
+    if expected:
+        with pytest.raises(ValueError, match="publication recovery"):
+            with registry_lock(project, registry):
+                pytest.fail("Recovery-required state was hidden")
+    else:
+        with registry_lock(project, registry):
+            pass
+
+
+def test_read_recovery_query_uses_existing_partial_index(writable):
+    from contextlib import closing
+    from data.resource_storage import _READ_RECOVERY_QUERY
+    project, registry, instance, content, image = writable
+    baseline = "SELECT 1 FROM publication_operations WHERE state IN ('installing','files_published') OR (kind IN ('annotation-collection','silhouettes') AND state='committed') LIMIT 1"
+    with ResourceStore(project, registry, approved=True).transaction() as database:
+        database.executemany("INSERT INTO publication_operations VALUES(?,?,?,'','finished','{}')",
+                             (("finished-" + str(number), instance, "silhouettes") for number in range(1000)))
+    with closing(sqlite3.connect(registry)) as database:
+        before = [row[3] for row in database.execute("EXPLAIN QUERY PLAN " + baseline)]
+        after = [row[3] for row in database.execute("EXPLAIN QUERY PLAN " + _READ_RECOVERY_QUERY)]
+        assert any("SCAN publication_operations" in detail and "USING" not in detail for detail in before)
+        assert any("USING INDEX one_pending_publication" in detail for detail in after)
+        assert database.execute(baseline).fetchone() is None
+        assert database.execute(_READ_RECOVERY_QUERY).fetchone() is None
+
+
+def test_read_recovery_mixed_journal_detects_and_clears_pending(writable):
+    from data.resource_storage import registry_lock
+    project, registry, instance, content, image = writable
+    store = ResourceStore(project, registry, approved=True)
+    with store.transaction() as database:
+        database.executemany("INSERT INTO publication_operations VALUES(?,?,?,?,?,'{}')", [
+            ("complete", instance, "silhouettes", "", "finished"),
+            ("retired", instance, "silhouettes", "", "rolled_back"),
+            ("reserved", instance, "engravings", "frame", "prepared"),
+            ("committed", instance, "engravings", "isolated", "committed"),
+        ])
+    with registry_lock(project, registry):
+        pass
+    with store.transaction() as database:
+        database.execute("UPDATE publication_operations SET state='files_published' WHERE operation_id='reserved'")
+    with pytest.raises(ValueError, match="publication recovery"):
+        with registry_lock(project, registry):
+            pytest.fail("Mixed pending publication was hidden")
+    with store.transaction() as database:
+        database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id='reserved'")
+        assert database.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    with registry_lock(project, registry):
+        pass
+
+
+def test_read_recovery_guard_observes_writer_commit_and_rollback(writable):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+    from data.resource_storage import registry_lock
+    project, registry, instance, content, image = writable
+    store = ResourceStore(project, registry, approved=True)
+    started = Event()
+    def reader():
+        started.set()
+        with registry_lock(project, registry):
+            return True
+    with ThreadPoolExecutor(max_workers=1) as executor:
+        with store.transaction() as database:
+            database.execute("INSERT INTO publication_operations VALUES(?,?,?,'','files_published','{}')", ("writer", instance, "silhouettes"))
+            future = executor.submit(reader)
+            assert started.wait(5)
+            assert not future.done()
+        with pytest.raises(ValueError, match="publication recovery"):
+            future.result(timeout=5)
+    with pytest.raises(RuntimeError, match="rollback probe"):
+        with store.transaction() as database:
+            database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id='writer'")
+            raise RuntimeError("rollback probe")
+    with pytest.raises(ValueError, match="publication recovery"):
+        with registry_lock(project, registry):
+            pytest.fail("Rolled-back completion became visible")
+    with store.transaction() as database:
+        database.execute("UPDATE publication_operations SET state='finished' WHERE operation_id='writer'")
+    with registry_lock(project, registry):
+        pass
+
+
 def test_existing_registry_lock_supports_nested_recovery_without_upgrade(writable):
     from data.resource_storage import registry_lock
     project, registry, instance, content, image = writable
