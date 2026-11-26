@@ -80,12 +80,13 @@ def resolve_engraving(project, instance_id, mode="frame", *, registry=None, acti
 @project_operation
 def indexed_publications(project, kind, media_type, *, registry=None):
     """Materialize committed publications for an explicitly requested derived rebuild."""
+    from contextlib import closing
     import sqlite3
     from data.resource_storage import registry_lock, relative_path
     if kind not in ("silhouettes", "engravings"):
         raise ValueError("Unsupported illustration source")
     with registry_lock(project, registry):
-        with sqlite3.connect(locations.project_file(project, registry).as_uri() + "?mode=ro", uri=True) as database:
+        with closing(sqlite3.connect(locations.project_file(project, registry).as_uri() + "?mode=ro", uri=True)) as database, database:
             keys = database.execute("SELECT l.instance_id,l.mode FROM resource_locations l JOIN instances i USING(instance_id) WHERE l.kind=? AND i.media_type=? ORDER BY l.instance_id,l.mode",
                                     (kind, media_type)).fetchall()
     records = []

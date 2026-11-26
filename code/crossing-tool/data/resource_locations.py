@@ -367,10 +367,11 @@ def annotation_context_token(project, registry=None, media_type=None):
 @project_operation
 def annotation_commitment(project, filename, media_type, registry):
     """Read one registry commitment, not an inference from directory existence."""
+    from contextlib import closing
     from data.resource_storage import registry_lock
     record = find_media(project, media_type, filename=filename)
     path = project_file(project, registry)
-    with registry_lock(project, path), sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
+    with registry_lock(project, path), closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database, database:
         meta = dict(database.execute("SELECT key,value FROM meta"))
         if meta.get("project") != str(Path(project).resolve()):
             raise ValueError("Annotation registry project mismatch")

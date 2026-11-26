@@ -2783,6 +2783,148 @@ def test_registry_resolution_descriptors_stable_without_gc(writable):
             gc.enable()
 
 
+@pytest.mark.parametrize("function,scenario", [
+    (function, scenario)
+    for function in ("indexed_publications", "annotation_commitment")
+    for scenario in ("success", "empty", "sql", "processing", "nested-shared", "nested-exclusive", "pending", "cancel")
+] + [("annotation_commitment", "missing-table")])
+def test_owned_registry_reads_close_without_gc(writable, monkeypatch, function, scenario):
+    from contextlib import closing, nullcontext
+    import fcntl
+    import gc
+    import os
+    from data.resource_storage import registry_lock
+    from services import resource_resolution
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    media = locations.find_media(project, "movie", filename="film.mp4")
+    ResourceStore(project, registry, approved=True).commit_annotation_layout(media, "movie", "legacy-v1")
+    publication = resolve_silhouette(project, instance, registry=registry)
+    commitment = locations.annotation_commitment(project, "film.mp4", "movie", registry)
+    with closing(sqlite3.connect(registry)) as database, database:
+        if scenario == "empty":
+            if function == "annotation_commitment":
+                database.execute("DELETE FROM annotation_layouts")
+        elif scenario == "missing-table":
+            database.execute("DROP TABLE annotation_layouts")
+        elif scenario == "processing":
+            if function == "indexed_publications":
+                publication["image"].write_bytes(b"corrupt published image")
+            else:
+                database.execute("UPDATE annotation_layouts SET artifacts='[]', revision=revision+1")
+        elif scenario == "pending":
+            database.execute("INSERT INTO publication_operations VALUES(?,?,?,'','files_published','{}')", ("lifetime-pending", instance, "silhouettes"))
+    def descriptor_count():
+        count = 0
+        for descriptor in os.listdir("/proc/self/fd"):
+            try:
+                count += os.readlink("/proc/self/fd/" + descriptor) == str(registry)
+            except FileNotFoundError:
+                pass
+        return count
+    def check_lock(held):
+        with registry.open("rb") as stream:
+            if held:
+                with pytest.raises(BlockingIOError):
+                    fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            else:
+                fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                fcntl.flock(stream.fileno(), fcntl.LOCK_UN)
+    original_connect = sqlite3.connect
+    original_resolve = resource_resolution.resolve_silhouette
+    connections = []
+    query_prefix = "SELECT l.instance_id,l.mode " if function == "indexed_publications" else "SELECT key,value FROM meta"
+    class TrackedConnection(sqlite3.Connection):
+        def execute(self, query, *arguments, **keywords):
+            if query.startswith(query_prefix):
+                self.owned = True
+                self.events = []
+                connections.append(self)
+                assert self.uri.endswith("?mode=ro") and self.options == {"uri": True}
+                check_lock(True)
+                with pytest.raises(sqlite3.OperationalError, match="readonly"):
+                    super().execute("CREATE TABLE lifetime_write_forbidden(value)")
+                if scenario == "sql":
+                    return super().execute("SELECT missing_lifetime_column FROM meta")
+                if scenario == "cancel":
+                    raise KeyboardInterrupt("lifetime cancellation")
+                return super().execute(query, *arguments, **keywords)
+            return super().execute(query, *arguments, **keywords)
+        def __exit__(self, exception_type, exception, traceback):
+            if getattr(self, "owned", False):
+                self.events.append(("transaction-exit", exception_type))
+            return super().__exit__(exception_type, exception, traceback)
+        def close(self):
+            if getattr(self, "owned", False):
+                check_lock(True)
+                self.events.append(("close", None))
+            return super().close()
+    def connect(*arguments, **keywords):
+        connection = original_connect(*arguments, factory=TrackedConnection, **keywords)
+        connection.uri, connection.options = str(arguments[0]), keywords
+        return connection
+    def resolve(*arguments, **keywords):
+        with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+            connections[-1].execute("SELECT 1")
+        return original_resolve(*arguments, **keywords)
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    if function == "indexed_publications":
+        monkeypatch.setattr(resource_resolution, "resolve_silhouette", resolve)
+    failures = {
+        "sql": (sqlite3.OperationalError, "missing_lifetime_column"),
+        "processing": (ValueError, "checksum" if function == "indexed_publications" else "artifact manifest"),
+        "pending": (ValueError, "publication recovery"),
+        "cancel": (KeyboardInterrupt, "lifetime cancellation"),
+    }
+    enabled = gc.isenabled()
+    gc.collect()
+    initial = descriptor_count()
+    gc.disable()
+    try:
+        for repeat in range(10):
+            error = pytest.raises(failures[scenario][0], match=failures[scenario][1]) if scenario in failures else nullcontext()
+            nested = registry_lock(project, registry, exclusive=scenario == "nested-exclusive") if scenario.startswith("nested-") else nullcontext()
+            with error:
+                with nested:
+                    if function == "indexed_publications":
+                        result = resource_resolution.indexed_publications(project, "silhouettes", "gameplay" if scenario == "empty" else "movie", registry=registry)
+                        if scenario == "empty":
+                            assert result == []
+                        else:
+                            assert len(result) == 1 and result[0]["instance_id"] == instance
+                            assert all(result[0][key] == value for key, value in publication["record"].items())
+                            assert result[0]["output_png"].read_bytes() == image.read_bytes()
+                    else:
+                        result = locations.annotation_commitment(project, "film.mp4", "movie", registry)
+                        if scenario in ("empty", "missing-table"):
+                            assert result is None
+                        else:
+                            assert result == commitment
+                            assert digest(locations.annotation_path(project, "film.mp4", "movie")) == result["artifacts"][".annotations.json"]
+                    if scenario.startswith("nested-"):
+                        check_lock(True)
+                        if scenario == "nested-shared":
+                            with pytest.raises(ValueError, match="upgraded"):
+                                with registry_lock(project, registry, exclusive=True):
+                                    pytest.fail("Shared registry lock was upgraded")
+            assert descriptor_count() == initial
+            check_lock(False)
+            if scenario != "pending":
+                assert len(connections) == repeat + 1
+                database = connections[-1]
+                expected_exit = sqlite3.OperationalError if scenario == "sql" else KeyboardInterrupt if scenario == "cancel" else ValueError if scenario == "processing" and function == "annotation_commitment" else None
+                assert database.events == [("transaction-exit", expected_exit), ("close", None)]
+                with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                    database.execute("SELECT 1")
+            else:
+                assert connections == []
+    finally:
+        for database in connections:
+            sqlite3.Connection.close(database)
+        if enabled:
+            gc.enable()
+
+
 def test_existing_registry_lock_supports_nested_recovery_without_upgrade(writable):
     from data.resource_storage import registry_lock
     project, registry, instance, content, image = writable
