@@ -7,7 +7,7 @@ locks; approved writes use exclusive locks and rollback-journal transactions.
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 import fcntl
 import hashlib
 import json
@@ -130,7 +130,7 @@ def _registry_lock(project, registry, *, exclusive=False):
         held[key] = exclusive
         _registry_lock_state.held = held
         if not exclusive:
-            with sqlite3.connect(path.as_uri() + "?mode=ro", uri=True) as database:
+            with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as database, database:
                 if database.execute("SELECT 1 FROM sqlite_master WHERE name='publication_operations'").fetchone():
                     if database.execute(_READ_RECOVERY_QUERY).fetchone():
                         raise ValueError("Explicit publication recovery required before lookup")

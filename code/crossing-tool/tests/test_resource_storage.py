@@ -2689,6 +2689,100 @@ def test_read_recovery_guard_observes_writer_commit_and_rollback(writable):
         pass
 
 
+@pytest.mark.parametrize("failure", [None, "body", "query", "pending", "cancel"])
+def test_registry_read_connection_closes_before_yield_and_on_failure(writable, monkeypatch, failure):
+    import fcntl
+    import gc
+    from data import resource_storage
+    project, registry, instance, content, image = writable
+    if failure == "pending":
+        with ResourceStore(project, registry, approved=True).transaction() as database:
+            database.execute("INSERT INTO publication_operations VALUES(?,?,?,'','files_published','{}')", ("pending-close", instance, "silhouettes"))
+    original_connect = sqlite3.connect
+    connections = []
+    events = []
+    class TrackedConnection(sqlite3.Connection):
+        def execute(self, query, *arguments, **keywords):
+            result = super().execute(query, *arguments, **keywords)
+            if failure == "query" and query == resource_storage._READ_RECOVERY_QUERY:
+                raise sqlite3.OperationalError("connection query failure")
+            return result
+        def __exit__(self, exception_type, exception, traceback):
+            events.append(("transaction-exit", exception_type))
+            return super().__exit__(exception_type, exception, traceback)
+        def close(self):
+            events.append(("close", None))
+            return super().close()
+    def connect(*arguments, **keywords):
+        connection = original_connect(*arguments, factory=TrackedConnection, **keywords)
+        connections.append(connection)
+        return connection
+    monkeypatch.setattr(resource_storage.sqlite3, "connect", connect)
+    expected = {"body": RuntimeError, "query": sqlite3.OperationalError, "pending": ValueError, "cancel": KeyboardInterrupt}
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for repeat in range(10):
+            def read():
+                with resource_storage.registry_lock(project, registry):
+                    with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                        connections[-1].execute("SELECT 1")
+                    with registry.open("rb") as stream:
+                        with pytest.raises(BlockingIOError):
+                            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    with resource_storage.registry_lock(project, registry):
+                        assert len(connections) == repeat + 1
+                    if failure == "body":
+                        raise RuntimeError("connection body failure")
+                    if failure == "cancel":
+                        raise KeyboardInterrupt("connection cancellation")
+            if failure is None:
+                read()
+            else:
+                with pytest.raises(expected[failure]):
+                    read()
+            assert len(connections) == repeat + 1
+            with pytest.raises(sqlite3.ProgrammingError, match="closed"):
+                connections[-1].execute("SELECT 1")
+            expected_exit = sqlite3.OperationalError if failure == "query" else ValueError if failure == "pending" else None
+            assert events[-2:] == [("transaction-exit", expected_exit), ("close", None)]
+        with resource_storage.registry_lock(project, registry, exclusive=True):
+            assert len(connections) == 10
+    finally:
+        for connection in connections:
+            connection.close()
+        if enabled:
+            gc.enable()
+
+
+def test_registry_resolution_descriptors_stable_without_gc(writable):
+    import gc
+    import os
+    project, registry, instance, content, image = writable
+    publish_resource(project, registry, instance, "silhouettes", content, image, approved=True)
+    def descriptor_count():
+        count = 0
+        for descriptor in os.listdir("/proc/self/fd"):
+            try:
+                count += os.readlink("/proc/self/fd/" + descriptor) == str(registry)
+            except FileNotFoundError:
+                pass
+        return count
+    gc.collect()
+    initial = descriptor_count()
+    enabled = gc.isenabled()
+    gc.disable()
+    try:
+        for repeat in range(40):
+            current = resolve_silhouette(project, instance, registry=registry)
+            assert current["record"]["instance_id"] == instance
+            assert current["image_bytes"] == image.read_bytes()
+            assert descriptor_count() == initial
+    finally:
+        if enabled:
+            gc.enable()
+
+
 def test_existing_registry_lock_supports_nested_recovery_without_upgrade(writable):
     from data.resource_storage import registry_lock
     project, registry, instance, content, image = writable
