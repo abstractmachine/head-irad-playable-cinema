@@ -1019,9 +1019,11 @@ def _member_fixture(project):
                 suffix = "." + prefix + ".manifest.json"
                 source = locations.annotation_path(project, filename, media_type, suffix)
                 destination = locations.annotation_path(project, filename, media_type, suffix, layout="media-first-v1")
-                manifest = {"version": 1, "index_type": "annotation-embeddings" if prefix == "annotations" else "frame-embeddings", "source_hash": "intentionally-stale-do-not-bless", "unknown": {"retain": True}}
+                manifest = {"version": 1, "media_type": media_type, "index_type": "annotation-embeddings" if prefix == "annotations" else "frame-embeddings", "source_hash": "intentionally-stale-do-not-bless", "unknown": {"retain": True}}
                 for section, artifact_suffix in (("json", ".annotations.json"), ("npy", "." + prefix + ".npy")):
-                    manifest[section] = {"path": artifacts[artifact_suffix]["source"], "sha256": "historical-stale-value"}
+                    reference = artifacts[artifact_suffix]["source"]
+                    checksum = hashlib.sha256(b"historical source annotation bytes").hexdigest() if section == "json" else artifacts[artifact_suffix]["sha256"]
+                    manifest[section] = {"path": reference, "filename": Path(reference).name, "hash": "sha256:" + checksum}
                 source.write_text(json.dumps(manifest))
                 _file(database, project, str(source.relative_to(project)), destination, "Transform", "data.annotate", hash_bytes=True)
                 _transform(database, str(source.relative_to(project)), "manifest-v1", transform_manifest(manifest, mapping))
@@ -1048,6 +1050,11 @@ def test_complete_optional_collection_members_and_stale_manifests():
                     manifest = json.loads(path.read_text())
                     assert manifest["source_hash"] == "intentionally-stale-do-not-bless"
                     assert manifest["unknown"] == {"retain": True}
+                    assert manifest["json"]["hash"] == "sha256:" + hashlib.sha256(b"historical source annotation bytes").hexdigest()
+                stats = json.loads((project / "data/indexes/corpus_stats.json").read_text())["stats"]
+                for key in ("annotation_embedding_inventory", "frame_embedding_inventory"):
+                    assert stats[key]["present"] == stats[key]["stale"] == len(records)
+                    assert stats[key]["usable"] == 0
 
 
 @pytest.mark.parametrize("boundary", ["metadata-replaced", "registry-snapshot-created", "registry-installed", "index-staged", "index-installed:synced", "graph-validation", "final-acceptance:before-sync", "context-installed"])

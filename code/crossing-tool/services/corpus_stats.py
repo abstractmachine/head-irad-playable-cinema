@@ -276,7 +276,12 @@ def _count_embeddings(project_path: str, *, registry=None) -> dict[str, int]:
     Counts only ``*.annotations.npy`` — the canonical new name.
     Old ambiguous ``*.npy`` files (pre-migration) are intentionally not counted
     here so that the stats reflect the new canonical naming convention.
+    With a registry, count only authenticated, usable members; legacy behavior
+    without a registry remains a physical file count.
     """
+    if registry is not None:
+        return {media_type: counts["usable"] for media_type, counts in
+                _embedding_inventory_stats(project_path, registry)["annotation_embedding_inventory"]["by_media_type"].items()}
     result: dict[str, int] = {}
     from data.resource_locations import annotation_root, annotation_files
     base = annotation_root(project_path)
@@ -293,7 +298,11 @@ def _count_frame_embeddings(project_path: str, *, registry=None) -> dict[str, in
     """Count frame-embedding .frames.npy files under data/annotations/shots/<media_type>/.
 
     Counts only ``*.frames.npy`` — does not count ``*.frames.valid.npy``.
+    With a registry, count only authenticated, usable members.
     """
+    if registry is not None:
+        return {media_type: counts["usable"] for media_type, counts in
+                _embedding_inventory_stats(project_path, registry)["frame_embedding_inventory"]["by_media_type"].items()}
     result: dict[str, int] = {}
     from data.resource_locations import annotation_root, annotation_files
     base = annotation_root(project_path)
@@ -307,6 +316,26 @@ def _count_frame_embeddings(project_path: str, *, registry=None) -> dict[str, in
                 if not f.name.endswith(".frames.valid.npy")
             )
             result[mt_dir.name] = count
+    return result
+
+
+def _embedding_inventory_stats(project_path, registry):
+    """Count authenticated presence and freshness without serving stale vectors."""
+    from data.resource_locations import annotation_embedding_inventory, annotation_directory
+    result = {key: {"present": 0, "usable": 0, "stale": 0, "by_media_type": {}}
+              for key in ("annotation_embedding_inventory", "frame_embedding_inventory")}
+    keys = {".annotations.npy": "annotation_embedding_inventory", ".frames.npy": "frame_embedding_inventory"}
+    for media_type in ("movie", "gameplay"):
+        counts = {key: {"present": 0, "usable": 0, "stale": 0} for key in result}
+        for artifact in annotation_embedding_inventory(project_path, media_type, registry=registry):
+            family = counts[keys[artifact["suffix"]]]
+            family["present"] += 1
+            family[artifact["state"]] += 1
+        for key, family in counts.items():
+            if annotation_directory(project_path, media_type).is_dir():
+                result[key]["by_media_type"][media_type] = family
+            for name, count in family.items():
+                result[key][name] += count
     return result
 
 
@@ -433,8 +462,13 @@ def get_corpus_stats(project_path: str, *, registry=None) -> dict[str, Any]:
     best_frames_by_type = _count_best_frames(project_path)
     motifs_by_type = _count_motifs(project_path, **context)
     palettes = _count_palettes(project_path)
-    embeddings_by_type = _count_embeddings(project_path, **context)
-    frame_embeddings_by_type = _count_frame_embeddings(project_path, **context)
+    embedding_inventory = _embedding_inventory_stats(project_path, registry) if registry is not None else {}
+    embeddings_by_type = ({media_type: counts["usable"] for media_type, counts in
+                           embedding_inventory["annotation_embedding_inventory"]["by_media_type"].items()}
+                          if registry is not None else _count_embeddings(project_path))
+    frame_embeddings_by_type = ({media_type: counts["usable"] for media_type, counts in
+                                 embedding_inventory["frame_embedding_inventory"]["by_media_type"].items()}
+                                if registry is not None else _count_frame_embeddings(project_path))
     shots_with_best_frame_by_type = _count_shots_with_best_frame(project_path, **context)
 
     flipbooks = _count_flipbooks(project_path)
@@ -465,6 +499,7 @@ def get_corpus_stats(project_path: str, *, registry=None) -> dict[str, Any]:
         # Frame embeddings (.frames.npy)
         "frame_embeddings": sum(frame_embeddings_by_type.values()),
         "frame_embeddings_by_type": frame_embeddings_by_type,
+        **embedding_inventory,
         # Vocabulary
         "vocabulary_terms": vocabulary_terms,
         # Silhouettes (sourced only from the illustration index — see

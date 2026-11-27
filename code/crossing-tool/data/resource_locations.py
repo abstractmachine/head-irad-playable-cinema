@@ -118,6 +118,87 @@ def annotation_files(project, media_type, suffix=".annotations.json", *, registr
             yield path
 
 
+@project_iterator
+def annotation_embedding_inventory(project, media_type, *, registry):
+    """Yield authenticated embedding presence separately from resolution freshness.
+
+    Missing optional members yield nothing; missing committed members, conflicting
+    copies, invalid provenance and checksum contradictions remain errors. Usable
+    means revision/manifest freshness, not validation of vector numerics or models.
+    """
+    from contextlib import closing
+    import re
+    from data.resource_storage import registry_lock, relative_path
+
+    families = {".annotations.npy": (".annotations.manifest.json", "annotation-embeddings"),
+                ".frames.npy": (".frames.manifest.json", "frame-embeddings")}
+    with registry_lock(project, registry):
+        with closing(sqlite3.connect(project_file(project, registry).as_uri() + "?mode=ro", uri=True)) as database, database:
+            operations = [json.loads(row[0]) for row in database.execute(
+                "SELECT details FROM publication_operations WHERE kind='annotation-collection' AND state IN ('committed','finished')")]
+        for record, collection in annotation_collections(project, media_type, registry=registry):
+            commitment = collection.get("commitment")
+            if commitment is None or ".annotations.json" not in commitment["artifacts"] or collection["conflicts"]:
+                raise ValueError("Missing or ambiguous committed annotation inventory")
+            revisions = {suffix: 0 for suffix in families}
+            published_hashes = {}
+            source_revision = 0
+            published_source = None
+            for details in operations:
+                if not isinstance(details, dict):
+                    raise ValueError("Invalid annotation publication provenance")
+                if details.get("filename") != record["filename"] or details.get("media_type") != media_type:
+                    continue
+                expected = details.get("expected_revision")
+                proposed, changed = details.get("proposed"), details.get("changed")
+                if (details.get("media_id") != record["media_id"] or type(expected) is not int or expected < 0
+                        or expected + 1 > commitment["revision"] or not isinstance(proposed, dict)
+                        or not isinstance(changed, dict) or any(suffix not in ANNOTATION_SUFFIXES for suffix in proposed)
+                        or any(not isinstance(value, str) or not re.fullmatch(r"[0-9a-f]{64}", value) for value in proposed.values())
+                        or any(proposed.get(suffix) != value for suffix, value in changed.items())):
+                    raise ValueError("Invalid annotation publication provenance")
+                if ".annotations.json" in changed and expected + 1 >= source_revision:
+                    if expected + 1 == source_revision and published_source != proposed[".annotations.json"]:
+                        raise ValueError("Conflicting annotation publication provenance")
+                    source_revision = expected + 1
+                    published_source = proposed[".annotations.json"]
+                for suffix in families:
+                    if suffix in proposed and expected + 1 >= revisions[suffix]:
+                        if expected + 1 == revisions[suffix] and published_hashes.get(suffix) != proposed[suffix]:
+                            raise ValueError("Conflicting annotation publication provenance")
+                        revisions[suffix] = expected + 1
+                        published_hashes[suffix] = proposed[suffix]
+            if published_source is not None and published_source != commitment["artifacts"][".annotations.json"]:
+                raise ValueError("Annotation source publication differs from commitment")
+            for suffix, (manifest_suffix, index_type) in families.items():
+                if suffix not in collection["existing"]:
+                    continue
+                if suffix not in commitment["artifacts"]:
+                    raise ValueError("Uncommitted annotation embedding in inventory")
+                if suffix in published_hashes and published_hashes[suffix] != commitment["artifacts"][suffix]:
+                    raise ValueError("Embedding publication differs from commitment")
+                stale = source_revision > revisions[suffix]
+                if manifest_suffix in collection["existing"]:
+                    if manifest_suffix not in commitment["artifacts"]:
+                        raise ValueError("Uncommitted embedding manifest in inventory")
+                    manifest = json.loads(collection["existing"][manifest_suffix].read_text(encoding="utf-8"))
+                    source = manifest.get("json") if isinstance(manifest, dict) else None
+                    member = manifest.get("npy") if isinstance(manifest, dict) else None
+                    source_path = collection["existing"][".annotations.json"]
+                    member_path = collection["existing"][suffix]
+                    if (not isinstance(source, dict) or not isinstance(member, dict) or manifest.get("version") != 1
+                            or manifest.get("media_type") != media_type or manifest.get("index_type") != index_type
+                            or source.get("path") != relative_path(project, source_path) or source.get("filename") != source_path.name
+                            or member.get("path") != relative_path(project, member_path) or member.get("filename") != member_path.name
+                            or not isinstance(source.get("hash"), str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", source["hash"])
+                            or member.get("hash") != "sha256:" + commitment["artifacts"][suffix]):
+                        raise ValueError("Invalid embedding manifest provenance")
+                    stale = stale or source["hash"] != "sha256:" + commitment["artifacts"][".annotations.json"]
+                yield {"filename": record["filename"], "media_id": record["media_id"], "suffix": suffix,
+                       "path": collection["existing"][suffix], "state": "stale" if stale else "usable",
+                       "source_revision": source_revision, "artifact_revision": revisions[suffix]}
+
+
 def artifact_directory(project, kind, record, media_type, instance_id, field, label):
     """Pure approved destination; classification cannot allocate/change identity."""
     if kind not in ("silhouettes", "engravings"):
