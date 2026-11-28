@@ -1045,6 +1045,10 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
     failures = []
     total = 0
     silhouette_accounting = None
+    best_validation = {"frozen_retain_targets": 0, "audited_reference_targets": 0,
+                       "historical_cache_targets": 0, "historical_cache_gaps": 0,
+                       "historical_cache_gap_details": [],
+                       "assurance": "Frozen Retain bytes and required audited references; non-enumerated historical caches are not authenticated"}
     def fail(category, source, detail):
         nonlocal total
         total += 1
@@ -1053,7 +1057,7 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
     journal = project / access.CONTROL / ("graph-" + state["operation"] + ".sqlite3")
     registry = project / "data/indexes/resources.sqlite3"
     try:
-        with closing(migration.readonly(path)) as frozen, closing(migration.readonly(journal)) as evidence, closing(migration.readonly(registry)) as installed:
+        with closing(migration.readonly(path)) as frozen, closing(migration.readonly(journal)) as evidence, closing(migration.readonly(registry)) as installed, ExitStack() as best_evidence:
             renames._event(interrupt, "graph-validation")
             for database in (frozen, evidence, installed):
                 _integrity(database)
@@ -1091,6 +1095,38 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
             if installed.execute("SELECT count(*) FROM annotation_layouts").fetchone()[0] != frozen.execute("SELECT count(*) FROM collections").fetchone()[0]:
                 fail("stale_reference", "annotation_layouts", "collection membership differs")
             metadata = {row[0]: json.loads(row[1]) for row in frozen.execute("SELECT * FROM meta")}
+            scope = frozen.execute("SELECT * FROM inventory_scopes WHERE scope='media/frames/best'").fetchone()
+            historical_scope = (scope is not None and scope["disposition"] == "Retain" and scope["freshly_enumerated"] == 0
+                                and json.loads(scope["evidence"]).get("rule") == "immutable outside migration; no new historical census; BEST dependencies inspected by exact active reference only")
+            audit = None
+            verified_references = metadata.get("verified_legacy_references")
+            if verified_references is not None:
+                report = verified_references["report"]
+                checksum = metadata["inputs"].get(report)
+                if (relative_path(project, report) != report or not report.startswith("outputs/maintenance/")
+                        or not isinstance(checksum, str) or len(checksum) != 64
+                        or any(character not in "0123456789abcdef" for character in checksum)
+                        or verified_references.get("failures") != 0):
+                    raise ValueError("Missing authenticated frozen BEST reference-audit evidence")
+                report_path = locations.project_file(project, report)
+                for suffix in ("-journal", "-wal", "-shm"):
+                    sidecar = project / (report + suffix)
+                    if os.path.lexists(sidecar) and locations.project_file(project, sidecar).stat().st_size:
+                        raise ValueError("BEST reference audit is not a cold snapshot")
+                with report_path.open("rb") as stream:
+                    header = stream.read(100)
+                if header[:16] != b"SQLite format 3\x00" or header[18:20] != b"\x01\x01":
+                    raise ValueError("BEST reference audit is not a cold rollback-journal snapshot")
+                if not _exact(project, report, checksum, reader=locations.project_file):
+                    raise ValueError("Missing frozen BEST reference audit")
+                audit_fields = ("st_dev", "st_ino", "st_size", "st_mtime_ns", "st_ctime_ns", "st_nlink", "st_mode")
+                audit_stat = report_path.stat()
+                audit_identity = tuple(getattr(audit_stat, field) for field in audit_fields)
+                audit = best_evidence.enter_context(closing(migration.readonly(report_path)))
+                _integrity(audit)
+            selected_best = {}
+            audited_targets = {}
+            required_best_targets = {row[0] for row in frozen.execute("SELECT proposed_target FROM reference_plan WHERE pointer='/source_frame' AND required=1")}
             preparation = locations.project_file(project, metadata["identity_registry"])
             if digest(preparation) != metadata["inputs"][metadata["identity_registry"]]:
                 raise ValueError("Frozen preparation registry changed")
@@ -1125,9 +1161,29 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                                 raise ValueError("Incorrect BEST selection")
                             best_path = best_frame_path(str(project), collection["media_type"], collection["filename"], shot_id)
                             best_reference = str(best_path.relative_to(project))
+                            selected_best[(collection["media_type"], shot_id)] = (best_reference, best["frame"])
                             member = frozen.execute("SELECT sha256 FROM files WHERE source=? AND disposition='Retain'", (best_reference,)).fetchone()
-                            if member is None or not _exact(project, best_reference, member[0]):
-                                raise ValueError("Missing or changed frozen BEST PNG")
+                            if member is not None:
+                                if not _exact(project, best_reference, member[0]):
+                                    fail("missing_resource", best_reference, "Missing frozen Retain BEST PNG")
+                                else:
+                                    best_validation["frozen_retain_targets"] += 1
+                            elif best_reference in required_best_targets:
+                                pass
+                            elif not historical_scope:
+                                fail("missing_evidence", best_reference, "BEST PNG has no frozen Retain mapping or explicit non-enumerated historical scope")
+                            else:
+                                best_validation["historical_cache_targets"] += 1
+                                if os.path.lexists(best_path):
+                                    locations.project_file(project, best_reference)
+                                else:
+                                    best_validation["historical_cache_gaps"] += 1
+                                    if len(best_validation["historical_cache_gap_details"]) < 128:
+                                        best_validation["historical_cache_gap_details"].append({
+                                            "media_type": collection["media_type"], "media_id": media_id,
+                                            "filename": collection["filename"], "shot_id": shot_id,
+                                            "path": best_reference, "selection": best,
+                                            "available": False, "authenticated": False})
                 except (ValueError, KeyError, TypeError, OSError) as error:
                     fail("stale_reference", collection["filename"], str(error))
             store = ResourceStore(project, registry, approved=True)
@@ -1158,10 +1214,54 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                 try:
                     if not target:
                         raise ValueError("unresolved approved reference")
-                    locations.project_file(project, target)
+                    if row["pointer"] != "/source_frame":
+                        locations.project_file(project, target)
                     source = frozen.execute("SELECT destination,disposition FROM files WHERE source=?", (row["source"],)).fetchone()
                     reference = source["destination"] if source and source["disposition"] in ("Move", "Transform") else row["source"]
                     record = json.loads(locations.project_file(project, reference).read_bytes())
+                    if row["pointer"] == "/source_frame":
+                        from data.media_id import parse_shot_id
+                        instance = frozen.execute("SELECT * FROM identity_bindings WHERE legacy_json=?", (row["source"],)).fetchone()
+                        decision = frozen.execute("SELECT * FROM reference_decisions WHERE source=?", (row["source"],)).fetchone() if audit is not None else None
+                        binding = locations.registered_instance(project, registry, record["instance_id"])
+                        identity, start, end = parse_shot_id(record["shot_id"])
+                        selection = selected_best.get((record["media_type"], record["shot_id"]))
+                        check = audit.execute("SELECT * FROM checks WHERE source=?", (row["source"],)).fetchone() if audit is not None else None
+                        if check is None:
+                            fail("missing_evidence", row["source"], "Required BEST reference lacks authenticated frozen audit evidence")
+                            continue
+                        if (source is None or source["disposition"] != "Transform" or instance is None
+                                or any(binding.get(key) != instance[key] for key in instance.keys())
+                                or instance["instance_id"] != record["instance_id"]
+                                or any(record.get(key) != binding[key] for key in ("media_type", "media_id", "shot_id"))
+                                or identity != record["media_id"] or selection is None or selection[0] != target
+                                or type(check["best_frame"]) is not int or not start <= check["best_frame"] <= end
+                                or selection[1] != check["best_frame"] or type(check["query_frame"]) is not int
+                                or not start <= check["query_frame"] <= end or record.get("frame") != check["query_frame"]
+                                or decision is None or decision["pointer"] != row["pointer"]
+                                or decision["original_target"] != row["target"] or decision["proposed_target"] != target
+                                or check["classification"] != decision["classification"] or check["target"] != target
+                                or check["state"] != "verified" or check["error"] is not None
+                                or record.get("historical_source_frame") != row["target"]
+                                or record.get("source_frame") != target):
+                            raise ValueError("Required BEST reference audit/instance/shot/selection binding differs")
+                        target_checksum = check["target_sha256"]
+                        if (not isinstance(target_checksum, str) or len(target_checksum) != 64
+                                or any(character not in "0123456789abcdef" for character in target_checksum)):
+                            fail("missing_evidence", row["source"], "Required BEST reference lacks an authenticated target checksum")
+                            continue
+                        if target in audited_targets and audited_targets[target] != target_checksum:
+                            raise ValueError("Contradictory frozen BEST target checksums")
+                        if target not in audited_targets:
+                            try:
+                                if not _exact(project, target, target_checksum, reader=locations.project_file):
+                                    fail("missing_resource", target, "Missing audited BEST target")
+                                    continue
+                            except (ValueError, OSError) as error:
+                                fail("changed_content", target, "Audited BEST target checksum or file identity differs: " + str(error))
+                                continue
+                            audited_targets[target] = target_checksum
+                            best_validation["audited_reference_targets"] += 1
                     historical_key = row["pointer"].removeprefix("/source/")
                     if record.get("resource_kind") == "engravings" and historical_key in ("silhouette_json", "silhouette_png", "source_json"):
                         if record.get("historical_source", {}).get(historical_key) != row["target"]:
@@ -1257,6 +1357,16 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                     fail("stale_reference", "generation_run", "historical run commitment differs")
                 if run["payload"]["source"]["image_sha256"] != digest(silhouette["image"]):
                     fail("stale_reference", "generation_run", "source mask association differs")
+            if audit is not None:
+                try:
+                    if not _exact(project, report, metadata["inputs"][report], reader=locations.project_file):
+                        raise ValueError("frozen report is absent")
+                    audit_stat = locations.project_file(project, report).stat()
+                    if tuple(getattr(audit_stat, field) for field in audit_fields) != audit_identity:
+                        raise ValueError("frozen report file identity changed")
+                except (ValueError, OSError) as error:
+                    best_validation["audited_reference_targets"] = 0
+                    fail("changed_content", report, "Frozen BEST reference audit changed during verification: " + str(error))
             marker = project / access.CONTROL / access.CANONICAL_CONTEXT
             if marker.exists():
                 try:
@@ -1267,7 +1377,8 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
     except (ValueError, OSError, KeyError, TypeError, IndexError, sqlite3.Error, access.MaintenanceError) as error:
         fail("interrupted_installation", "graph", str(error))
     return {"graph_accepted": total == 0, "failure_count": total, "failures": failures,
-            "silhouette_accounting": silhouette_accounting, "ordinary_consumers_enabled": False}
+            "silhouette_accounting": silhouette_accounting, "ordinary_consumers_enabled": False,
+            "best_validation": {**best_validation, "gap_details_truncated": best_validation["historical_cache_gaps"] > len(best_validation["historical_cache_gap_details"])}}
 
 
 @_fixture_access
