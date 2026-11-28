@@ -834,7 +834,7 @@ MANUAL_BEST_GAPS = (
 )
 
 
-def _best_fixture(project, *, audited=False, scope=True, retain_first=False, manual=None):
+def _best_fixture(project, *, audited=False, scope=True, retain_first=False, manual=None, historical_questionable=False):
     from services import resource_migration as migration
     from services.frame_match import best_frame_path
     options = {}
@@ -842,7 +842,7 @@ def _best_fixture(project, *, audited=False, scope=True, retain_first=False, man
         media, shot_id, selected_frame, query_frame = manual
         options = {"first_media": media, "first_record": {"shot_id": shot_id, "frame": query_frame, "source_frame": "frame:" + str(query_frame)},
                    "first_best": {"frame": selected_frame, "score": 1.0, "method": "manual", "source": "user"}}
-    plan, _, preparation, records = _full_fixture(project, **options)
+    plan, _, preparation, records = _full_fixture(project, historical_questionable=historical_questionable, **options)
     record, instance, legacy, media = records[0]
     best = best_frame_path(str(project), record["media_type"], media["filename"], record["shot_id"])
     target = str(best.relative_to(project))
@@ -887,6 +887,169 @@ def _stage_best_graph(owner, plan, checksum):
     return arguments
 
 
+def _unchanged_best_fixture(project, *, record_index=0, historical_questionable=False, excluded=False):
+    from services import resource_migration as migration
+    from services.frame_match import best_frame_path
+    if excluded:
+        def factory(root, **options):
+            return _full_fixture(root, **options)
+        plan, _, preparation, records = _zero_fixture(project, base_factory=factory,
+            historical_questionable=historical_questionable, empty_index=record_index)
+        with sqlite3.connect(plan) as database:
+            database.execute("DELETE FROM files WHERE source LIKE 'media/frames/best/%'")
+            database.execute("INSERT INTO inventory_scopes VALUES('media/frames/best','Retain',?,0)",
+                (json.dumps({"rule": "immutable outside migration; no new historical census; BEST dependencies inspected by exact active reference only"}),))
+    else:
+        plan, _, preparation, records, _best = _best_fixture(project, historical_questionable=historical_questionable)
+    record, instance, legacy, media = records[record_index]
+    best = best_frame_path(str(project), record["media_type"], media["filename"], record["shot_id"])
+    record["source_frame"] = str(best)
+    if historical_questionable and not excluded:
+        record["assignment"] = {"state": "inactive"}
+    legacy.write_text(json.dumps(record))
+    source = str(legacy.relative_to(project))
+    with sqlite3.connect(plan) as database:
+        destination = database.execute("SELECT destination FROM files WHERE source=?", (source,)).fetchone()[0]
+        registration_key = database.execute("SELECT registration_key FROM identity_bindings WHERE instance_id=?", (instance,)).fetchone()[0]
+        database.execute("DELETE FROM transformations WHERE source=?", (source,))
+        database.execute("DELETE FROM files WHERE source=?", (source,))
+        _file(database, project, source, project / destination, "Transform", "services.resource_publication", instance_id=instance, hash_bytes=True)
+        after = migration.transform_silhouette(record, instance)
+        _transform(database, source, "silhouette-v1", after,
+            patch={key: after[key] for key in ("publication_contract", "resource_kind", "instance_id", "png")})
+        database.execute("INSERT OR REPLACE INTO silhouettes(legacy_json,legacy_png,registration_key,instance_id,destination,media_type,media_id,shot_id,field,label) VALUES(?,?,?,?,?,?,?,?,?,?)",
+            (source, str(legacy.with_suffix('.png').relative_to(project)), registration_key, instance, str(Path(destination).parent), record["media_type"], record["media_id"], record["shot_id"], record["field"], record["label"]))
+        database.execute("CREATE TABLE reference_decisions(source TEXT PRIMARY KEY,pointer TEXT,original_target TEXT,proposed_target TEXT,classification TEXT,approval_required INTEGER,payload TEXT)")
+        migration._reference(database, source, "/source_frame", str(best), str(best),
+            "retained BEST materialization; not the query-specific frame selection")
+    report = project / "outputs/maintenance/best-reference-checks.sqlite3"
+    report.parent.mkdir(parents=True, exist_ok=True)
+    assert migration.verify_legacy_references(project, plan, report)["failures"] == 0
+    return plan, digest(plan), preparation, records, best
+
+
+@pytest.mark.parametrize("record_index", [0, 3], ids=["movie", "gameplay"])
+@pytest.mark.parametrize("cache_bytes", [None, b"different unauthenticated historical bytes", b""])
+def test_best_validation_preserves_unchanged_required_historical_reference(record_index, cache_bytes):
+    from services.resource_graph import validate_fixture_graph
+    with access.temporary_rename_project() as project:
+        plan, checksum, _, records, best = _unchanged_best_fixture(project, record_index=record_index)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            arguments = _stage_best_graph(owner, plan, checksum)
+            if cache_bytes is not None:
+                best.write_bytes(cache_bytes)
+            result = validate_fixture_graph(owner, plan, **arguments)
+            assert result["graph_accepted"], result["failures"]
+            assert result["best_validation"]["unchanged_reference_records"] == 1
+            assert result["best_validation"]["audited_reference_targets"] == 0
+            assert "not authenticated" in result["best_validation"]["assurance"]
+            assert best.exists() and records[record_index][0]["frame"] == 12
+
+
+@pytest.mark.parametrize("defect", ["missing-target", "wrong-shot", "wrong-frame", "wrong-media", "wrong-instance",
+    "source-before-image", "source-after-image", "reference-transform", "frame-transform", "target-move",
+    "journal-target-transform", "wrong-role", "wrong-classification", "undeclared-scope", "enumerated-scope", "missing-alias-audit"])
+def test_best_validation_rejects_unchanged_reference_contradictions(defect):
+    from services import resource_migration as migration
+    from services.resource_graph import validate_fixture_graph
+    with access.temporary_rename_project() as project:
+        plan, _, _, records, best = _unchanged_best_fixture(project)
+        source = str(records[0][2].relative_to(project))
+        with sqlite3.connect(plan) as frozen:
+            if defect in ("reference-transform", "frame-transform"):
+                patch = json.loads(frozen.execute("SELECT patch FROM transformations WHERE source=?", (source,)).fetchone()[0])
+                patch["source_frame" if defect == "reference-transform" else "frame"] = str(best) if defect == "reference-transform" else 13
+                after = {**records[0][0], **patch}
+                frozen.execute("DELETE FROM transformations WHERE source=?", (source,))
+                _transform(frozen, source, "silhouette-v1", after, patch=patch)
+            elif defect == "target-move":
+                _file(frozen, project, str(best.relative_to(project)), best.with_name("relocated.png"), "Move", "fixture", hash_bytes=True)
+            elif defect == "wrong-role":
+                frozen.execute("UPDATE silhouettes SET legacy_png='wrong.png'")
+            elif defect == "wrong-classification":
+                frozen.execute("UPDATE reference_plan SET classification='unclassified' WHERE pointer='/source_frame'")
+            elif defect == "undeclared-scope":
+                frozen.execute("DELETE FROM inventory_scopes WHERE scope='media/frames/best'")
+            elif defect == "enumerated-scope":
+                frozen.execute("UPDATE inventory_scopes SET freshly_enumerated=1")
+            elif defect == "missing-alias-audit":
+                frozen.execute("INSERT INTO reference_decisions VALUES(?,?,?,?,?,?,?)", (source, "/source_frame", str(best), str(best), "known legacy project-root alias; human approval required", 1, "{}"))
+        checksum = digest(plan)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            arguments = _stage_best_graph(owner, plan, checksum)
+            journal = project / access.CONTROL / "graph-graph.sqlite3"
+            with sqlite3.connect(journal) as evidence, sqlite3.connect(project / "data/indexes/resources.sqlite3") as registry:
+                number = evidence.execute("SELECT number FROM transforms WHERE source=?", (source,)).fetchone()[0]
+                current = project / registry.execute("SELECT record_path FROM resource_locations WHERE instance_id=?", (records[0][1],)).fetchone()[0]
+                if defect == "missing-target":
+                    best.unlink()
+                elif defect == "source-before-image":
+                    (journal.with_suffix("") / (str(number) + ".before")).write_text('{}')
+                elif defect in ("wrong-shot", "wrong-frame", "wrong-media", "wrong-instance", "source-after-image"):
+                    record = json.loads(current.read_text())
+                    key, value = {"wrong-shot": ("shot_id", records[1][0]["shot_id"]), "wrong-frame": ("frame", 21),
+                        "wrong-media": ("media_id", "tmdb_999"), "wrong-instance": ("instance_id", records[1][1]),
+                        "source-after-image": ("source_frame", str(best.with_name("other.png")))}[defect]
+                    record[key] = value
+                    current.write_text(json.dumps(record))
+                elif defect == "journal-target-transform":
+                    other = str(records[1][2].relative_to(project))
+                    changed = json.loads(evidence.execute("SELECT evidence FROM transforms WHERE source=?", (other,)).fetchone()[0])
+                    changed["destination"] = str(best.relative_to(project))
+                    evidence.execute("UPDATE transforms SET evidence=? WHERE source=?", (json.dumps(changed), other))
+            result = validate_fixture_graph(owner, plan, **arguments)
+            assert not result["graph_accepted"], defect
+            if defect == "missing-alias-audit":
+                assert any(item["category"] == "missing_evidence" for item in result["failures"])
+
+
+@pytest.mark.parametrize("excluded,historical_questionable", [(False, False), (True, False), (False, True), (True, True)])
+def test_best_validation_unchanged_reference_preserves_history_and_is_read_only(excluded, historical_questionable):
+    from services.resource_graph import validate_fixture_graph
+    with access.temporary_rename_project() as project:
+        plan, checksum, preparation, records, best = _unchanged_best_fixture(project,
+            excluded=excluded, historical_questionable=historical_questionable)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            arguments = _stage_best_graph(owner, plan, checksum)
+            snapshot = {path: path.read_bytes() for path in project.rglob('*') if path.is_file()}
+            first = validate_fixture_graph(owner, plan, **arguments)
+            second = validate_fixture_graph(owner, plan, **arguments)
+            assert first == second and first["graph_accepted"], first["failures"]
+            assert first["best_validation"]["unchanged_reference_records"] == 1
+            assert first["silhouette_accounting"]["excluded"] == int(excluded)
+            assert all(path.read_bytes() == contents for path, contents in snapshot.items())
+            assert set(snapshot) == {path for path in project.rglob('*') if path.is_file()}
+            assert digest(plan) == checksum and preparation.exists() and best.exists()
+
+
+@pytest.mark.parametrize("defect", [None, "missing-hash", "wrong-hash", "wrong-best", "failed-check"])
+def test_best_validation_unchanged_reference_retains_shared_target_audit_checks(defect):
+    from services.resource_graph import validate_fixture_graph
+    with access.temporary_rename_project() as project:
+        plan, _, _, _, best = _unchanged_best_fixture(project)
+        report = project / "outputs/maintenance/best-reference-checks.sqlite3"
+        target = str(best.relative_to(project))
+        with sqlite3.connect(report) as audit:
+            audit.execute("INSERT INTO checks VALUES(?,?,?,?,?,?,?,?)", ("historical/other-object.json",
+                "known legacy project-root alias; human approval required", target,
+                None if defect == "missing-hash" else "0" * 64 if defect == "wrong-hash" else digest(best),
+                15, 15 if defect == "wrong-best" else 14, "failed" if defect == "failed-check" else "verified", None))
+        with sqlite3.connect(plan) as frozen:
+            inputs = json.loads(frozen.execute("SELECT value FROM meta WHERE key='inputs'").fetchone()[0])
+            inputs[str(report.relative_to(project))] = digest(report)
+            frozen.execute("UPDATE meta SET value=? WHERE key='inputs'", (json.dumps(inputs),))
+        checksum = digest(plan)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            arguments = _stage_best_graph(owner, plan, checksum)
+            result = validate_fixture_graph(owner, plan, **arguments)
+            assert result["graph_accepted"] is (defect is None), result["failures"]
+            assert result["best_validation"]["audited_reference_targets"] == int(defect is None)
+
+
 @pytest.mark.parametrize("scope,retain_first", [(True, False), (True, True), (False, False), (False, True)])
 def test_best_validation_authenticates_audited_reference_not_query_frame(scope, retain_first):
     from services.resource_graph import install_fixture_graph
@@ -912,6 +1075,62 @@ def test_best_validation_authenticates_audited_reference_not_query_frame(scope, 
             published = json.loads((project / reference).read_text())
             assert published["frame"] == 12 and published["source_frame"] == str(best.relative_to(project))
             assert published["historical_source_frame"] == records[0][0]["source_frame"]
+
+
+@pytest.mark.parametrize("defect", [None, "missing", "changed"])
+def test_best_validation_unchanged_reference_keeps_retain_integrity(defect):
+    from services.resource_graph import validate_fixture_graph
+    with access.temporary_rename_project() as project:
+        plan, _, _, _, best = _unchanged_best_fixture(project)
+        with sqlite3.connect(plan) as frozen:
+            _file(frozen, project, str(best.relative_to(project)), None, "Retain", "services.frame_match", hash_bytes=True)
+        checksum = digest(plan)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            arguments = _stage_best_graph(owner, plan, checksum)
+            if defect == "missing":
+                best.unlink()
+            elif defect == "changed":
+                best.write_bytes(b"different mapped bytes")
+            result = validate_fixture_graph(owner, plan, **arguments)
+            assert result["graph_accepted"] is (defect is None), result["failures"]
+            if defect:
+                assert any(item["category"] == ("missing_resource" if defect == "missing" else "changed_content") for item in result["failures"])
+
+
+@pytest.mark.parametrize("defect", [None, "missing", "changed"])
+def test_best_validation_unchanged_reference_keeps_generation_integrity(defect):
+    from services.resource_graph import validate_fixture_graph
+    from services.frame_match import best_frame_path
+    with access.temporary_rename_project() as project:
+        def factory(root):
+            return _unchanged_best_fixture(root)[:4]
+        plan, _, _, records = _engraving_fixture(project, base_factory=factory)
+        best = best_frame_path(str(project), "movie", records[0][3]["filename"], records[0][0]["shot_id"])
+        with sqlite3.connect(plan) as frozen:
+            run = json.loads(frozen.execute("SELECT value FROM meta WHERE key='generation_run_plan'").fetchone()[0])
+            run["payload"]["source"]["source_frame"] = str(best.relative_to(project))
+            wrapper = json.dumps({**run["payload"], "artifacts": run["artifact_hashes"]}, sort_keys=True, allow_nan=False).encode()
+            run["wrapper_sha256"] = hashlib.sha256(wrapper).hexdigest()
+            run["wrapper_bytes"] = len(wrapper)
+            source, patch = frozen.execute("SELECT source,patch FROM transformations WHERE schema='engraving-v2'").fetchone()
+            after = json.loads(patch)
+            after["source"] = run["payload"]["source"]
+            after["published_run"]["sha256"] = run["wrapper_sha256"]
+            frozen.execute("DELETE FROM transformations WHERE source=?", (source,))
+            _transform(frozen, source, "engraving-v2", after)
+            frozen.execute("UPDATE meta SET value=? WHERE key='generation_run_plan'", (json.dumps(run),))
+        checksum = digest(plan)
+        access.enroll(project, approved=True)
+        with access.maintenance(project, "graph", approved=True) as owner:
+            arguments = _stage_best_graph(owner, plan, checksum)
+            if defect == "missing":
+                best.unlink()
+            elif defect == "changed":
+                best.write_bytes(b"different generation evidence")
+            result = validate_fixture_graph(owner, plan, **arguments)
+            assert result["graph_accepted"] is (defect is None), result["failures"]
+            assert result["best_validation"]["generation_reference_targets"] == int(defect is None)
 
 
 @pytest.mark.parametrize("manual", MANUAL_BEST_GAPS, ids=["gannon-211", "bad-company-1377"])

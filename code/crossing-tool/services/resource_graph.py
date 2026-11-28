@@ -1046,6 +1046,7 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
     total = 0
     silhouette_accounting = None
     best_validation = {"frozen_retain_targets": 0, "audited_reference_targets": 0,
+                       "unchanged_reference_records": 0, "generation_reference_targets": 0,
                        "historical_cache_targets": 0, "historical_cache_gaps": 0,
                        "historical_cache_gap_details": [],
                        "assurance": "Frozen Retain bytes and required audited references; non-enumerated historical caches are not authenticated"}
@@ -1126,7 +1127,9 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                 _integrity(audit)
             selected_best = {}
             audited_targets = {}
-            required_best_targets = {row[0] for row in frozen.execute("SELECT proposed_target FROM reference_plan WHERE pointer='/source_frame' AND required=1")}
+            required_best_targets = {str(Path(row[0]).relative_to(project)) if Path(row[0]).is_absolute() else row[0] for row in frozen.execute("SELECT proposed_target FROM reference_plan WHERE pointer='/source_frame' AND required=1") if row[0]}
+            has_decisions = frozen.execute("SELECT 1 FROM sqlite_master WHERE name='reference_decisions'").fetchone() is not None
+            journaled_best_targets = {value for row in evidence.execute("SELECT source,json_extract(evidence,'$.destination') FROM transforms WHERE source LIKE 'media/frames/best/%' OR json_extract(evidence,'$.destination') LIKE 'media/frames/best/%'") for value in row if value}
             preparation = locations.project_file(project, metadata["identity_registry"])
             if digest(preparation) != metadata["inputs"][metadata["identity_registry"]]:
                 raise ValueError("Frozen preparation registry changed")
@@ -1216,21 +1219,81 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                         raise ValueError("unresolved approved reference")
                     if row["pointer"] != "/source_frame":
                         locations.project_file(project, target)
-                    source = frozen.execute("SELECT destination,disposition FROM files WHERE source=?", (row["source"],)).fetchone()
+                    source = frozen.execute("SELECT f.*,t.schema,t.patch,t.after_sha256 FROM files f LEFT JOIN transformations t USING(source) WHERE source=?", (row["source"],)).fetchone()
                     reference = source["destination"] if source and source["disposition"] in ("Move", "Transform") else row["source"]
                     record = json.loads(locations.project_file(project, reference).read_bytes())
                     if row["pointer"] == "/source_frame":
                         from data.media_id import parse_shot_id
                         instance = frozen.execute("SELECT * FROM identity_bindings WHERE legacy_json=?", (row["source"],)).fetchone()
-                        decision = frozen.execute("SELECT * FROM reference_decisions WHERE source=?", (row["source"],)).fetchone() if audit is not None else None
+                        decision = frozen.execute("SELECT * FROM reference_decisions WHERE source=?", (row["source"],)).fetchone() if has_decisions else None
                         binding = locations.registered_instance(project, registry, record["instance_id"])
                         identity, start, end = parse_shot_id(record["shot_id"])
                         selection = selected_best.get((record["media_type"], record["shot_id"]))
                         check = audit.execute("SELECT * FROM checks WHERE source=?", (row["source"],)).fetchone() if audit is not None else None
+                        target_reference = str(Path(target).relative_to(project)) if Path(target).is_absolute() else target
+                        target_checksum = None
+                        target_service = "audit"
                         if check is None:
-                            fail("missing_evidence", row["source"], "Required BEST reference lacks authenticated frozen audit evidence")
-                            continue
-                        if (source is None or source["disposition"] != "Transform" or instance is None
+                            member = frozen.execute("SELECT * FROM files WHERE source=? OR destination=?", (target_reference, target_reference)).fetchall()
+                            role = frozen.execute("SELECT * FROM silhouettes WHERE legacy_json=?", (row["source"],)).fetchone()
+                            if (not historical_scope and not (len(member) == 1 and member[0]["disposition"] == "Retain")
+                                    or decision is not None or source is None or source["disposition"] != "Transform"
+                                    or source["schema"] != "silhouette-v1" or instance is None or role is None
+                                    or row["classification"] not in ("retained BEST materialization; not the query-specific frame selection", "retained exact current BEST reference")
+                                    or selection is None or target != str(project / selection[0]) or row["target"] != target
+                                    or any(binding.get(key) != instance[key] for key in instance.keys())
+                                    or source["instance_id"] != binding["instance_id"] or instance["legacy_json"] != row["source"]
+                                    or any(role[key] != instance[key] for key in ("instance_id", "registration_key", "media_type", "media_id", "shot_id", "legacy_png"))
+                                    or role["destination"] != str(Path(source["destination"]).parent)
+                                    or any(record.get(key) != binding[key] for key in ("instance_id", "media_type", "media_id", "shot_id"))
+                                    or identity != record["media_id"] or type(record.get("frame")) is not int or not start <= record["frame"] <= end
+                                    or any(key in json.loads(source["patch"]) for key in ("source_frame", "historical_source_frame", "frame", "shot_id", "media_id", "media_type", "filename"))
+                                    or any(item["disposition"] != "Retain" for item in member) or target_reference in journaled_best_targets):
+                                fail("missing_evidence", row["source"], "Required BEST reference lacks authenticated frozen audit evidence or unchanged historical binding")
+                                continue
+                            transformation = evidence.execute("SELECT * FROM transforms WHERE source=?", (row["source"],)).fetchone()
+                            if (transformation is None or transformation["state"] != "done"
+                                    or any(json.loads(transformation["evidence"]).get(key) != source[key] for key in ("source", "destination", "instance_id", "sha256", "after_sha256"))):
+                                raise ValueError("Unchanged BEST reference lacks completed frozen transformation evidence")
+                            before_reference = str((journal.with_suffix("") / (str(transformation["number"]) + ".before")).relative_to(project))
+                            if not _exact(project, before_reference, source["sha256"], reader=locations.project_file):
+                                raise ValueError("Missing unchanged BEST source before-image")
+                            original = json.loads(locations.project_file(project, before_reference).read_bytes())
+                            if (any(original.get(key) != record.get(key) for key in ("media_type", "media_id", "filename", "shot_id", "frame", "source_frame"))
+                                    or original.get("source_frame") != row["target"]
+                                    or any(role[key] != original.get(key) for key in ("media_type", "media_id", "shot_id", "field", "label"))
+                                    or {**original, **json.loads(source["patch"])} != record
+                                    or not _exact(project, reference, source["after_sha256"], reader=locations.project_file)):
+                                raise ValueError("Unchanged BEST frozen source/reference binding differs")
+                            if member:
+                                target_checksum = member[0]["sha256"]
+                                target_service = "Retain"
+                            if audit is not None:
+                                for witness in audit.execute("SELECT * FROM checks WHERE target=?", (target_reference,)):
+                                    if (witness["state"] != "verified" or witness["error"] is not None
+                                            or witness["classification"] != "known legacy project-root alias; human approval required"
+                                            or type(witness["best_frame"]) is not int or witness["best_frame"] != selection[1]
+                                            or witness["target_sha256"] is None
+                                            or target_checksum is not None and target_checksum != witness["target_sha256"]):
+                                        raise ValueError("Contradictory frozen BEST target evidence")
+                                    target_checksum = witness["target_sha256"]
+                            generation = metadata.get("generation_run_plan", {}).get("payload", {}).get("source", {})
+                            if generation.get("source_frame") == target_reference:
+                                if not isinstance(generation.get("evidence"), list) or not generation["evidence"]:
+                                    raise ValueError("Missing frozen generation BEST target evidence")
+                                for witness in generation.get("evidence", []):
+                                    if (witness.get("media_id") != record["media_id"] or witness.get("frame") != selection[1]
+                                            or type(witness.get("frame")) is not int or witness.get("image_sha256") is None
+                                            or target_checksum is not None and target_checksum != witness.get("image_sha256")):
+                                        raise ValueError("Contradictory frozen generation BEST target evidence")
+                                    target_checksum = witness.get("image_sha256")
+                                    target_service = "generation"
+                            if target_checksum is None:
+                                path = locations.project_file(project, target_reference)
+                                if path.stat().st_nlink != 1:
+                                    raise ValueError("Unchanged BEST target is not a regular single-link file")
+                            best_validation["unchanged_reference_records"] += 1
+                        elif (source is None or source["disposition"] != "Transform" or instance is None
                                 or any(binding.get(key) != instance[key] for key in instance.keys())
                                 or instance["instance_id"] != record["instance_id"]
                                 or any(record.get(key) != binding[key] for key in ("media_type", "media_id", "shot_id"))
@@ -1245,14 +1308,18 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                                 or record.get("historical_source_frame") != row["target"]
                                 or record.get("source_frame") != target):
                             raise ValueError("Required BEST reference audit/instance/shot/selection binding differs")
-                        target_checksum = check["target_sha256"]
-                        if (not isinstance(target_checksum, str) or len(target_checksum) != 64
+                        if check is not None:
+                            target_checksum = check["target_sha256"]
+                        if target_checksum is not None and (not isinstance(target_checksum, str) or len(target_checksum) != 64
                                 or any(character not in "0123456789abcdef" for character in target_checksum)):
                             fail("missing_evidence", row["source"], "Required BEST reference lacks an authenticated target checksum")
                             continue
-                        if target in audited_targets and audited_targets[target] != target_checksum:
+                        if check is not None and target_checksum is None:
+                            fail("missing_evidence", row["source"], "Required BEST reference lacks an authenticated target checksum")
+                            continue
+                        if target_checksum is not None and target_reference in audited_targets and audited_targets[target_reference] != target_checksum:
                             raise ValueError("Contradictory frozen BEST target checksums")
-                        if target not in audited_targets:
+                        if target_checksum is not None and target_reference not in audited_targets:
                             try:
                                 if not _exact(project, target, target_checksum, reader=locations.project_file):
                                     fail("missing_resource", target, "Missing audited BEST target")
@@ -1260,8 +1327,11 @@ def validate_fixture_graph(owner, plan, *, approved_digest, plan_identity, clien
                             except (ValueError, OSError) as error:
                                 fail("changed_content", target, "Audited BEST target checksum or file identity differs: " + str(error))
                                 continue
-                            audited_targets[target] = target_checksum
-                            best_validation["audited_reference_targets"] += 1
+                            audited_targets[target_reference] = target_checksum
+                            if target_service == "generation":
+                                best_validation["generation_reference_targets"] += 1
+                            elif target_service == "audit":
+                                best_validation["audited_reference_targets"] += 1
                     historical_key = row["pointer"].removeprefix("/source/")
                     if record.get("resource_kind") == "engravings" and historical_key in ("silhouette_json", "silhouette_png", "source_json"):
                         if record.get("historical_source", {}).get(historical_key) != row["target"]:
